@@ -1,0 +1,23 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE files
+.vscode/
+.idea/
+
+# --- CRITICAL ---
+# Secret keys and config files
+.env
+config.ini
+
+# Data files
+*.csv
+*.json
+
+# Notebook checkpoints
+.ipynb_checkpoints/
