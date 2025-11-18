@@ -1,19 +1,19 @@
 import os
-import alpaca_trade_api as tradeapi
+import pandas as pd
 from dotenv import load_dotenv
+from datetime import datetime
+# --- Imports for the NEW 'alpaca-py' library ---
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.data.models import BarSet
 
-# --- IMPORTANT ---
-# This assumes you have your .env file in the root directory
-# (one level up from 'src')
-# If your .env file is in the SAME directory as this script, 
-# you can just use load_dotenv()
-# But for our repo structure, we do this:
+# Load .env file (assuming it's in the root, one level up)
 load_dotenv(dotenv_path='../.env')
 
 class DataHandler:
     """
-    Handles all market data requests.
-    This class is the "senses" of the bot.
+    Handles all market data requests using the NEW 'alpaca-py' library.
     """
     def __init__(self, paper_trading=True):
         """
@@ -25,84 +25,114 @@ class DataHandler:
         if self.api_key is None or self.secret_key is None:
             raise EnvironmentError("API keys not found. Check your .env file.")
             
-        if paper_trading:
-            self.base_url = "https://paper-api.alpaca.markets"
-        else:
-            self.base_url = "https://api.alpaca.markets"
-            
-        self.api = tradeapi.REST(
+        # The new library doesn't use 'paper_trading' in the client constructor
+        # It's handled by the keys you use (paper keys vs. live keys)
+        # We'll use the 'paper=True' flag in the TradingClient (in ExecutionHandler)
+        # For data, it doesn't matter.
+        self.client = StockHistoricalDataClient(
             self.api_key,
-            self.secret_key,
-            self.base_url,
-            api_version='v2'
+            self.secret_key
         )
-        print("Data Handler initialized.")
+        print("Data Handler (alpaca-py) initialized.")
 
-    def get_historical_bars(self, symbols, timeframe, start, end=None):
+    def get_historical_bars(self, symbols, timeframe_str, start, end=None):
         """
         Fetches historical bar data for one or more symbols.
         
         :param symbols: A list of symbols (e.g., ['AAPL', 'GOOG'])
-        :param timeframe: '1Min', '5Min', '15Min', '1H', '1D'
+        :param timeframe_str: '1Min', '5Min', '15Min', '1H', '1D'
         :param start: Start date (e.g., '2020-01-01')
         :param end: End date (e.g., '2021-01-01')
         :return: A dictionary of pandas DataFrames, one for each symbol.
         """
-        try:
-            # Note: get_bars is deprecated, use get_bars_rest
-            # Let's use the new SDK format:
-            from alpaca_trade_api.rest import TimeFrame, GetBarsRequest
-            
-            # Convert string timeframe to SDK TimeFrame object
-            tf_map = {
-                '1Min': TimeFrame.Minute,
-                '5Min': TimeFrame.FiveMinutes,
-                '15Min': TimeFrame.FifteenMinutes,
-                '1H': TimeFrame.Hour,
-                '1D': TimeFrame.Day
-            }
-            if timeframe not in tf_map:
-                raise ValueError(f"Unsupported timeframe: {timeframe}")
-                
-            request_params = GetBarsRequest(
-                symbol_or_symbols=symbols,
-                timeframe=tf_map[timeframe],
-                start=start,
-                end=end
-            )
-            
-            bar_data = self.api.get_bars(request_params)
-            
-            # Process data into a clean dictionary of DataFrames
-            data_frames = {}
-            for symbol in symbols:
-                # Filter bars for the specific symbol
-                data_frames[symbol] = bar_data.df[bar_data.df['symbol'] == symbol]
-                
-            return data_frames
+        
+        # --- 1. Robust TimeFrame Mapping (This is correct) ---
+        tf_map = {
+            '1Min': TimeFrame.Minute,
+            '5Min': TimeFrame(5, TimeFrameUnit.Minute),
+            '15Min': TimeFrame(15, TimeFrameUnit.Minute),
+            '1H': TimeFrame.Hour,
+            '1D': TimeFrame.Day
+        }
+        if timeframe_str not in tf_map:
+            raise ValueError(f"Unsupported timeframe: {timeframe_str}")
+        
+        timeframe = tf_map[timeframe_str]
 
+        # --- 2. Robust Date Parsing (This is correct) ---
+        try:
+            start_dt = datetime.fromisoformat(start)
+            end_dt = datetime.fromisoformat(end) if end else None
         except Exception as e:
-            print(f"Error fetching historical data: {e}")
+            print(f"Error parsing date strings: {e}. Please use YYYY-MM-DD format.")
             return None
 
+        try:
+            # Build the request (This is correct)
+            request_params = StockBarsRequest(
+                symbol_or_symbols=symbols,
+                timeframe=timeframe,
+                start=start_dt,
+                end=end_dt
+            )
+            
+            print("Submitting data request to Alpaca...")
+            bar_data = self.client.get_stock_bars(request_params)
+            
+            if not bar_data:
+                print("---!!! Alpaca returned an empty data set. !!!---")
+                return {}
+
+            # --- 3. NEW AND CORRECT DATA PARSING ---
+            
+            # bar_data.df has a MultiIndex: (symbol, timestamp)
+            # We will group by the first level ('symbol') and create a dict
+            
+            final_data = {}
+            
+            # Check if we got any data at all
+            if bar_data.df.empty:
+                print("BarSet was returned, but its DataFrame is empty.")
+                return {}
+
+            # Group by the first index level, which is 'symbol'
+            grouped_by_symbol = bar_data.df.groupby(level=0)
+            
+            for symbol, symbol_df in grouped_by_symbol:
+                # symbol_df still has the MultiIndex. 
+                # We'll drop the 'symbol' part of the index to make it a clean DataFrame.
+                final_data[symbol] = symbol_df.reset_index(level=0, drop=True)
+            
+            return final_data
+            # --- END OF NEW PARSING ---
+
+        except Exception as e:
+            print(f"---!!! AN ERROR OCCURRED during data fetch !!!---")
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        
     def get_latest_bar(self, symbol):
         """
         Fetches the single latest bar for a symbol.
+        Note: This is less efficient, use get_historical_bars if possible.
         """
         try:
-            bar = self.api.get_latest_bar(symbol)
-            return bar
+            # We must use the StockHistoricalDataClient for this
+            # (No direct 'get_latest_bar' in alpaca-py)
+            request_params = StockBarsRequest(
+                symbol_or_symbols=[symbol],
+                timeframe=TimeFrame.Minute, # Get the finest grain
+                limit=1 # Get only the last one
+            )
+            bar = self.client.get_stock_bars(request_params)
+            return bar[symbol][0] if bar[symbol] else None
+            
         except Exception as e:
             print(f"Error fetching latest bar for {symbol}: {e}")
             return None
 
-    def get_latest_quote(self, symbol):
-        """
-        Fetches the latest Level 1 quote (bid/ask) for a symbol.
-        """
-        try:
-            quote = self.api.get_latest_quote(symbol)
-            return quote
-        except Exception as e:
-            print(f"Error fetching latest quote for {symbol}: {e}")
-            return None
+    # Note: Latest quote is handled by the TradingClient, not Data client.
+    # We'll add this to ExecutionHandler or a new "QuoteHandler" later
+    # if you need real-time streaming.
