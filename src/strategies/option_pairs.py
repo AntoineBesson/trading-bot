@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -22,6 +22,8 @@ class OptionPairsStrategy(BaseStrategy):
     symbol_a: str
     symbol_b: str
     option_type: str = "call"
+    long_option_type: Optional[str] = None
+    short_option_type: Optional[str] = None
     target_delta: float = 0.45
     days_to_expiry: int = 30
     lookback_days: int = 90
@@ -45,7 +47,10 @@ class OptionPairsStrategy(BaseStrategy):
         )
         self.option_data = self.option_data_handler or OptionDataHandler(self.data_handler)
         self.multi_leg_exec = self.multi_leg_execution or MultiLegExecutionHelper(self.execution_handler)
+        self.long_option_type = self.long_option_type or self.option_type
+        self.short_option_type = self.short_option_type or self.option_type
         self.position = "flat"
+        self.position_option_type: Optional[str] = None
         self.last_z_score: Optional[float] = None
         self.spread_mean: Optional[float] = None
         self.spread_std: Optional[float] = None
@@ -56,26 +61,27 @@ class OptionPairsStrategy(BaseStrategy):
     # ------------------------------------------------------------------
     def generate_signal(self) -> List[Signal]:
         self._maybe_refresh_spread_stats()
-        snap_a = self.option_data.get_option_snapshot(
-            symbol=self.symbol_a,
-            option_type=self.option_type,
-            target_delta=self.target_delta,
-            days_to_expiry=self.days_to_expiry,
-        )
-        snap_b = self.option_data.get_option_snapshot(
-            symbol=self.symbol_b,
-            option_type=self.option_type,
-            target_delta=self.target_delta,
-            days_to_expiry=self.days_to_expiry,
-        )
-        if not snap_a or not snap_b:
+        pricing_snaps = self._get_snapshots(self.option_type)
+        if pricing_snaps is None:
             return []
 
+        snap_a, snap_b = pricing_snaps
         self._vega_ratio = self._compute_vega_ratio(snap_a, snap_b)
         spread = snap_a.price - self._vega_ratio * snap_b.price
         z_score = self._compute_z_score(spread)
         self.last_z_score = z_score
-        signals = self._evaluate_rules(z_score, snap_a, snap_b)
+
+        action = self._determine_action(z_score)
+        if action == "none":
+            return []
+
+        trade_option_type = self._option_type_for_action(action)
+        trade_snaps = self._get_snapshots(trade_option_type)
+        if trade_snaps is None:
+            return []
+
+        trade_snap_a, trade_snap_b = trade_snaps
+        signals = self._dispatch_action(action, trade_snap_a, trade_snap_b)
         if self.auto_execute and signals:
             self.multi_leg_exec.execute(signals)
         return signals
@@ -165,21 +171,60 @@ class OptionPairsStrategy(BaseStrategy):
         }
 
     # ------------------------------------------------------------------
-    def _evaluate_rules(self, z_score: float, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
-        signals: List[Signal] = []
+    def _determine_action(self, z_score: float) -> str:
         if self.position == "flat":
             if z_score >= self.entry_threshold:
-                signals = self._open_short_spread(snap_a, snap_b)
-            elif z_score <= -self.entry_threshold:
-                signals = self._open_long_spread(snap_a, snap_b)
+                return "open_short"
+            if z_score <= -self.entry_threshold:
+                return "open_long"
         elif self.position == "short" and z_score <= self.exit_threshold:
-            signals = self._close_short_spread(snap_a, snap_b)
+            return "close_short"
         elif self.position == "long" and z_score >= -self.exit_threshold:
-            signals = self._close_long_spread(snap_a, snap_b)
-        return signals
+            return "close_long"
+        return "none"
+
+    def _get_snapshots(self, option_type: str) -> Optional[Tuple[OptionSnapshot, OptionSnapshot]]:
+        if not option_type:
+            return None
+        snap_a = self.option_data.get_option_snapshot(
+            symbol=self.symbol_a,
+            option_type=option_type,
+            target_delta=self.target_delta,
+            days_to_expiry=self.days_to_expiry,
+        )
+        snap_b = self.option_data.get_option_snapshot(
+            symbol=self.symbol_b,
+            option_type=option_type,
+            target_delta=self.target_delta,
+            days_to_expiry=self.days_to_expiry,
+        )
+        if not snap_a or not snap_b:
+            return None
+        return snap_a, snap_b
+
+    def _option_type_for_action(self, action: str) -> str:
+        if action == "open_long":
+            return self.long_option_type
+        if action == "open_short":
+            return self.short_option_type
+        if self.position_option_type:
+            return self.position_option_type
+        return self.long_option_type if self.position == "long" else self.short_option_type
+
+    def _dispatch_action(self, action: str, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
+        if action == "open_short":
+            return self._open_short_spread(snap_a, snap_b)
+        if action == "open_long":
+            return self._open_long_spread(snap_a, snap_b)
+        if action == "close_short":
+            return self._close_short_spread(snap_a, snap_b)
+        if action == "close_long":
+            return self._close_long_spread(snap_a, snap_b)
+        return []
 
     def _open_short_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
         self.position = "short"
+        self.position_option_type = snap_a.option_type
         return [
             self._build_leg(snap_a, "sell", self.contracts),
             self._build_leg(snap_b, "buy", self._hedge_contracts(snap_a, snap_b)),
@@ -187,6 +232,7 @@ class OptionPairsStrategy(BaseStrategy):
 
     def _open_long_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
         self.position = "long"
+        self.position_option_type = snap_a.option_type
         return [
             self._build_leg(snap_a, "buy", self.contracts),
             self._build_leg(snap_b, "sell", self._hedge_contracts(snap_a, snap_b)),
@@ -194,6 +240,7 @@ class OptionPairsStrategy(BaseStrategy):
 
     def _close_short_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
         self.position = "flat"
+        self.position_option_type = None
         return [
             self._build_leg(snap_a, "buy", self.contracts),
             self._build_leg(snap_b, "sell", self._hedge_contracts(snap_a, snap_b)),
@@ -201,6 +248,7 @@ class OptionPairsStrategy(BaseStrategy):
 
     def _close_long_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
         self.position = "flat"
+        self.position_option_type = None
         return [
             self._build_leg(snap_a, "sell", self.contracts),
             self._build_leg(snap_b, "buy", self._hedge_contracts(snap_a, snap_b)),

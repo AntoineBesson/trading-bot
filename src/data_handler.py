@@ -1,15 +1,20 @@
 import os
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
 import pandas as pd
 from dotenv import load_dotenv
-from datetime import datetime
 # --- Imports for the NEW 'alpaca-py' library ---
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.data.models import BarSet
 
 # Load .env file (assuming it's in the root, one level up)
-load_dotenv(dotenv_path='../.env')
+env_path = Path(__file__).resolve().parents[1] / ".env"
+if not load_dotenv(env_path):
+    # Fallback to default search so users running outside the repo root still load secrets
+    load_dotenv()
+
 
 class DataHandler:
     """
@@ -123,15 +128,60 @@ class DataHandler:
             # (No direct 'get_latest_bar' in alpaca-py)
             request_params = StockBarsRequest(
                 symbol_or_symbols=[symbol],
-                timeframe=TimeFrame.Minute, # Get the finest grain
-                limit=1 # Get only the last one
+                timeframe=TimeFrame.Minute,  # Get the finest grain
+                start=datetime.now(timezone.utc) - timedelta(days=2),
+                limit=1  # Get only the last one
             )
-            bar = self.client.get_stock_bars(request_params)
-            return bar[symbol][0] if bar[symbol] else None
-            
+            bars = self.client.get_stock_bars(request_params)
+            latest_bar = self._extract_latest_from_bars(bars, symbol)
+            if latest_bar:
+                return latest_bar
+
+            print(f"Falling back to daily close for {symbol}.")
+            fallback = self._latest_daily_close(symbol)
+            if fallback:
+                return fallback
+            print(f"No latest bar data returned for {symbol}.")
+            return None
+
         except Exception as e:
             print(f"Error fetching latest bar for {symbol}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
+
+    def _extract_latest_from_bars(self, bars, symbol):
+        if bars is None or getattr(bars, "df", pd.DataFrame()).empty:
+            return None
+        try:
+            symbol_df = bars.df.xs(symbol)
+        except KeyError:
+            return None
+        if symbol_df.empty:
+            return None
+        symbol_df = symbol_df.sort_index()
+        latest_row = symbol_df.iloc[-1]
+        latest_dict = latest_row.to_dict()
+        latest_dict.setdefault("symbol", symbol)
+        latest_dict["timestamp"] = symbol_df.index[-1].isoformat()
+        return latest_dict
+
+    def _latest_daily_close(self, symbol):
+        start = (datetime.now(timezone.utc) - timedelta(days=10)).date().isoformat()
+        history = self.get_historical_bars([symbol], "1D", start)
+        if not history:
+            return None
+        df = history.get(symbol)
+        if df is None or df.empty:
+            return None
+        last_row = df.iloc[-1]
+        ts = df.index[-1]
+        timestamp = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+        payload = last_row.to_dict()
+        payload.setdefault("symbol", symbol)
+        payload.setdefault("close", float(payload.get("close", payload.get("c", 0.0))))
+        payload["timestamp"] = timestamp
+        return payload
 
     # Note: Latest quote is handled by the TradingClient, not Data client.
     # We'll add this to ExecutionHandler or a new "QuoteHandler" later

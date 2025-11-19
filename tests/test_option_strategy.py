@@ -124,3 +124,39 @@ def test_option_pairs_strategy_generates_signals():
     assert len(signals) == 2
     assert signals[0]["action"] == "buy"
     assert strategy.position == "flat"
+
+
+def test_option_pairs_strategy_switches_option_type():
+    data = FakeDataHandler()
+    execution = FakeExecutionHandler()
+    strategy = OptionPairsStrategy(
+        data_handler=data,
+        execution_handler=execution,
+        symbol_a="AAA",
+        symbol_b="BBB",
+        option_type="call",
+        long_option_type="call",
+        short_option_type="put",
+        target_delta=0.45,
+        entry_threshold=0.2,
+        exit_threshold=0.0,
+        contracts=1,
+        lookback_days=60,
+        timeframe="1D",
+        auto_execute=False,
+    )
+    strategy.stat_refresh_days = 10 ** 6
+    strategy.spread_mean = 0.0
+    strategy.spread_std = 0.01
+
+    strategy._compute_z_score = types.MethodType(lambda self, spread: 1.0, strategy)
+    signals = strategy.generate_signal()
+    assert len(signals) == 2
+    assert all(leg["option_type"] == "put" for leg in signals)
+    assert strategy.position == "short"
+
+    strategy._compute_z_score = types.MethodType(lambda self, spread: -0.5, strategy)
+    signals = strategy.generate_signal()
+    assert len(signals) == 2
+    assert all(leg["option_type"] == "put" for leg in signals)
+    assert strategy.position == "flat"
