@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  trading-bot:
+    build: .
+    container_name: quant-bot
+    restart: always  # <--- CRITICAL: Auto-restarts if it crashes or server reboots
+    env_file:
+      - .env         # Loads your keys securely
+    volumes:
+      - ./logs:/app/logs # Saves logs to the server disk so they persist

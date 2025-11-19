@@ -5,6 +5,7 @@ import logging
 import os
 from datetime import datetime
 from dotenv import load_dotenv
+import pandas as pd
 
 # --- Import your modules ---
 # (We add 'src' to the path so this works no matter where you run it from)
@@ -16,10 +17,13 @@ from strategies.pairs_trade import PairsTradeStrategy
 from strategies.option_pairs import OptionPairsStrategy
 from options.data_handler import OptionDataHandler
 from options.multileg import MultiLegExecutionHelper
+from universe_manager import UniverseManager
 
 # --- Configuration ---
 # How often the bot checks for signals (in seconds)
 SLEEP_DELAY = 60 
+# How often to rescan the universe (in seconds) - e.g., every 24 hours
+SCAN_INTERVAL = 24 * 60 * 60 
 
 # --- Logging Setup ---
 logging.basicConfig(
@@ -53,54 +57,124 @@ class TradingBot:
         # 3. Initialize Strategy Stack
         self.option_data_handler = OptionDataHandler(self.dh)
         self.multi_leg_helper = MultiLegExecutionHelper(self.eh)
-        logger.info("Initializing strategies...")
-        self.strategies = self._build_strategies()
-        logger.info(
-            "Loaded strategies: %s",
-            ", ".join(getattr(strategy, "name", strategy.__class__.__name__) for strategy in self.strategies),
+        
+        # 4. Initialize Universe Manager
+        try:
+            # This assumes your CSV has a column header named "symbol"
+            self.universe = pd.read_csv("data/universe.csv")['symbol'].tolist()
+            logger.info(f"Loaded {len(self.universe)} symbols from data/universe.csv")
+        except Exception as e:
+            logger.warning(f"Could not load universe.csv ({e}). Using default S&P Financials list.")
+            # Default universe (S&P 500 Financials subset or similar)
+            self.universe = [
+    'ZTS', 'ZBRA', 'ZBH', 'YUM', 'XYZ', 'XYL', 'XOM', 'XEL', 'WYNN', 'WY', 
+    'WTW', 'WST', 'WSM', 'WRB', 'WMT', 'WMB', 'WM', 'WFC', 'WELL', 'WEC', 
+    'WDC', 'WDAY', 'WBD', 'WAT', 'WAB', 'VZ', 'VTRS', 'VTR', 'VST', 'VRTX', 
+    'VRSN', 'VRSK', 'VMC', 'VLTO', 'VLO', 'VICI', 'V', 'USB', 'URI', 'UPS', 
+    'UNP', 'UNH', 'ULTA', 'UHS', 'UDR', 'UBER', 'UAL', 'TYL', 'TXT', 'TXN', 
+    'TTWO', 'TTD', 'TT', 'TSN', 'TSLA', 'TSCO', 'TRV', 'TROW', 'TRMB', 'TRGP', 
+    'TPR', 'TPL', 'TMUS', 'TMO', 'TKO', 'TJX', 'TGT', 'TFC', 'TER', 'TEL', 
+    'TECH', 'TDY', 'TDG', 'TAP', 'T', 'SYY', 'SYK', 'SYF', 'SWKS', 'SWK', 
+    'SW', 'STZ', 'STX', 'STT', 'STLD', 'STE', 'SRE', 'SPGI', 'SPG', 'SOLV', 
+    'SOLS', 'SO', 'SNPS', 'SNA', 'SMCI', 'SLB', 'SJM', 'SHW', 'SCHW', 'SBUX', 
+    'SBAC', 'RVTY', 'RTX', 'RSG', 'ROST', 'ROP', 'ROL', 'ROK', 'RMD', 'RL', 
+    'RJF', 'RF', 'REGN', 'REG', 'RCL', 'QCOM', 'QQ', 'PYPL', 'PWR', 'PTC', 
+    'PSX', 'PSKY', 'PSA', 'PRU', 'PPL', 'PPG', 'POOL', 'PODD', 'PNW', 'PNR', 
+    'PNC', 'PM', 'PLTR', 'PLD', 'PKG', 'PHM', 'PH', 'PGR', 'PG', 'PFG', 
+    'PFE', 'PEP', 'PEG', 'PCG', 'PCAR', 'PAYX', 'PAYC', 'PANW', 'OXY', 'OTIS', 
+    'ORLY', 'ORCL', 'ON', 'OMC', 'OKE', 'ODFL', 'O', 'NXP', 'NWSA', 'NWS', 
+    'NVR', 'NVDA', 'NUE', 'NTRS', 'NTAP', 'NSC', 'NRG', 'NOW', 'NOC', 'NKE', 
+    'NI', 'NFLX', 'NEM', 'NEE', 'NDSN', 'NDAQ', 'NCLH', 'MU', 'MTD', 'MTCH', 
+    'MTB', 'MSI', 'MSFT', 'MSCI', 'MS', 'MRNA', 'MRK', 'MPWR', 'MPC', 'MOS', 
+    'MOH', 'MO', 'MNST', 'MMM', 'MMC', 'MLM', 'MKC', 'MHK', 'MGM', 'META', 
+    'MET', 'MDT', 'MDLZ', 'MCO', 'MCK', 'MCHP', 'MCD', 'MAS', 'MAR', 'MAA', 
+    'MA', 'LYV', 'LYB', 'LW', 'LVS', 'LUV', 'LULU', 'LRCX', 'LOW', 'LNT', 
+    'LMT', 'LLY', 'LKQ', 'LIN', 'LII', 'LHX', 'LH', 'LEN', 'LDOS', 'L', 
+    'KVUE', 'KR', 'KO', 'KMI', 'KMB', 'KLAC', 'KKR', 'KIM', 'KHC', 'KEYS', 
+    'KEY', 'KDP', 'K', 'JPM', 'JNJ', 'JKHY', 'JCI', 'JBL', 'JBHT', 'J', 
+    'IVZ', 'ITW', 'IT', 'ISRG', 'IRM', 'IR', 'IQV', 'IPG', 'IP', 'INVH', 
+    'INTU', 'INTC', 'INCY', 'IFF', 'IEX', 'IDXX', 'ICE', 'IBM', 'IBKR', 
+    'HWM', 'HUM', 'HUBB', 'HSY', 'HST', 'HSIC', 'HRL', 'HPQ', 'HPE', 'HOOD', 
+    'HON', 'HOLX', 'HLT', 'HII', 'HIG', 'HD', 'HCA', 'HBAN', 'HAS', 'HAL', 
+    'GWW', 'GS', 'GRMN', 'GPN', 'GPC', 'GOOGL', 'GOOG', 'GNRC', 'GM', 'GLW', 
+    'GL', 'GIS', 'GILD', 'GEV', 'GEN', 'GEHC', 'GE', 'GDDY', 'GD', 'FTV', 
+    'FTNT', 'FSLR', 'FRT', 'FOXA', 'FOX', 'FITB', 'FISV', 'FIS', 'FICO', 
+    'FFIV', 'FE', 'FDX', 'FDS', 'FCX', 'FAST', 'FANG', 'F', 'EXR', 'EXPE', 
+    'EXPD', 'EXE', 'EXC', 'EW', 'EVRG', 'ETR', 'ETN', 'ESS', 'ES', 'ERIE', 
+    'EQT', 'EQR', 'EQIX', 'EPAM', 'EOG', 'EMR', 'EME', 'ELV', 'EL', 'EIX', 
+    'EG', 'EFX', 'ED', 'ECL', 'EBAY', 'EA', 'DXCM', 'DVN', 'DVA', 'DUK', 
+    'DTE', 'DRI', 'DPZ', 'DOW', 'DOV', 'DOC', 'DLTR', 'DLR', 'DIS', 'DHR', 
+    'DHI', 'DGX', 'DG', 'DELL', 'DECK', 'DE', 'DDOG', 'DD', 'DAY', 'DASH', 
+    'DAL', 'D', 'CVX', 'CVS', 'CTVA', 'CTSH', 'CTRA', 'CTAS', 'CSX', 'CSGP', 
+    'CSCO', 'CRWD', 'CRM', 'CRL', 'CPT', 'CPRT', 'CPB', 'CPAY', 'COST', 
+    'COR', 'COP', 'COO', 'COIN', 'COF', 'CNP', 'CNC', 'CMS', 'CMI', 'CMG', 
+    'CME', 'CMCSA', 'CLX', 'CL', 'CINF', 'CI', 'CHTR', 'CHRW', 'CHD', 'CFG', 
+    'CF', 'CEG', 'CDW', 'CDNS', 'CCL', 'CCI', 'CBRE', 'CBOE', 'CB', 'CAT', 
+    'CARR', 'CAH', 'CAG', 'C', 'BXP', 'BX', 'BSX', 'BRO', 'BRK.B', 'BR', 
+    'BMY', 'BLK', 'BLDR', 'BKR', 'BKNG', 'BK', 'BIIB', 'BG', 'BF.B', 'BEN', 
+    'BDX', 'BBY', 'BAX', 'BALL', 'BAC', 'BA', 'AZO', 'AXP', 'AXON', 'AWK', 
+    'AVY', 'AVGO', 'AVB', 'ATO', 'ARE', 'APTV', 'APP', 'APO', 'APH', 'APD', 
+    'APA', 'AOS', 'AON', 'ANET', 'AMZN', 'AMT', 'AMP', 'AMGN', 'AME', 'AMD', 
+    'AMCR', 'AMAT', 'ALLE', 'ALL', 'ALGN', 'ALB', 'AKAM', 'AJG', 'AIZ', 
+    'AIG', 'AFL', 'AES', 'AEP', 'AEE', 'ADSK', 'ADP', 'ADM', 'ADI', 'ADBE', 
+    'ACN', 'ACGL', 'ABT', 'ABNB', 'ABBV', 'AAPL', 'A'
+]
+        self.universe_manager = UniverseManager(
+            data_handler=self.dh,
+            universe=self.universe,
+            lookback_days=180,
+            p_value_threshold=0.05,
+            z_score_threshold=1.5
         )
         
-        # 4. Register Signal Handlers (for graceful shutdown)
+        logger.info("Initializing strategies...")
+        self.strategies = []
+        self.rebalance_strategies() # Initial scan and build
+        
+        # 5. Register Signal Handlers (for graceful shutdown)
         signal.signal(signal.SIGINT, self.handle_exit_signal)
         signal.signal(signal.SIGTERM, self.handle_exit_signal)
 
-    def _build_strategies(self):
-        """Create and return the configured strategies."""
-
-        strategies = []
-
-        strategies.append(
-            PairsTradeStrategy(
-                data_handler=self.dh,
-                execution_handler=self.eh,
-                symbol_a="V",      # <--- REPLACE with your Symbol A
-                symbol_b="MA",     # <--- REPLACE with your Symbol B
-                hedge_ratio=0.527, # <--- REPLACE with your Hedge Ratio from the notebook
-                entry_threshold=2.0,
-                exit_threshold=0.0,
-                auto_execute=True,
+    def rebalance_strategies(self):
+        """Scans the universe and rebuilds the strategy list."""
+        logger.info("Rebalancing strategies based on universe scan...")
+        
+        # 1. Scan for pairs
+        watchlist = self.universe_manager.scan()
+        
+        # 2. Build Strategies from Watchlist
+        new_strategies = []
+        for item in watchlist:
+            sym_a = item['symbol_a']
+            sym_b = item['symbol_b']
+            # hedge_ratio = item['hedge_ratio'] # Used for equity pairs, option strategy calculates its own
+            
+            logger.info(f"Adding strategy for pair: {sym_a}/{sym_b}")
+            
+            # Add Option Pairs Strategy
+            new_strategies.append(
+                OptionPairsStrategy(
+                    data_handler=self.dh,
+                    execution_handler=self.eh,
+                    symbol_a=sym_a,
+                    symbol_b=sym_b,
+                    option_type="call", # Default to calls
+                    target_delta=0.45,
+                    days_to_expiry=30,
+                    entry_threshold=2.0, # Enter when Z-score hits 2.0 (as requested)
+                    exit_threshold=0.0,
+                    contracts=1,
+                    auto_execute=True,
+                    option_data_handler=self.option_data_handler,
+                    multi_leg_execution=self.multi_leg_helper,
+                )
             )
+            
+        self.strategies = new_strategies
+        logger.info(
+            "Active strategies: %s",
+            ", ".join(getattr(s, "name", s.__class__.__name__) + f"({s.symbol_a}/{s.symbol_b})" for s in self.strategies),
         )
-
-        strategies.append(
-            OptionPairsStrategy(
-                data_handler=self.dh,
-                execution_handler=self.eh,
-                symbol_a="V",
-                symbol_b="MA",
-                option_type="call",
-                target_delta=0.45,
-                days_to_expiry=30,
-                entry_threshold=0.5,
-                exit_threshold=0.0,
-                contracts=1,
-                auto_execute=True,
-                option_data_handler=self.option_data_handler,
-                multi_leg_execution=self.multi_leg_helper,
-            )
-        )
-
-        return strategies
 
     def handle_exit_signal(self, signum, frame):
         """Handles Ctrl+C or kill signals to stop the bot gracefully."""
@@ -111,8 +185,16 @@ class TradingBot:
         """The main infinite loop."""
         logger.info("Bot started. Running 24/7 loop...")
         
+        last_scan = time.time()
+        
         while self.keep_running:
             try:
+                # --- 0. Periodic Universe Scan ---
+                if time.time() - last_scan > SCAN_INTERVAL:
+                    logger.info("Scheduled universe scan triggered.")
+                    self.rebalance_strategies()
+                    last_scan = time.time()
+
                 for strategy in self.strategies:
                     name = getattr(strategy, "name", strategy.__class__.__name__)
                     symbols = getattr(strategy, "symbols", [])
