@@ -1,73 +1,54 @@
 # trading-bot
-This project is my first time tackling a trading bot. 
 
-Data Handler: Connects to the broker's API (e.g., Alpaca) to get a live, real-time data feed.
+This repo hosts two market-neutral systems built on Alpaca data/execution:
 
-Strategy Engine: Runs your math model (e.g., the HMM or the O-U process) on the live data to generate a signal (e.g., BUY, SELL, HOLD).
+1. **Equity Pairs Trade** – find cointegrated stocks (see `notebooks/0_find_pairs.ipynb`), backtest them with `PairsTradeStrategy`, then execute with `ExecutionHandler`.
+2. **Option Vega-Neutral Spread** – size two option legs by vega exposure so the combined book is resilient to implied-volatility shocks (`OptionPairsStrategy`).
 
-Execution Handler: When the Strategy Engine generates a signal, this module forms a proper order (e.g., "BUY 100 shares of AAPL at market") and sends it to the broker's API.
+## Components at a Glance
 
-Position Manager: Keeps track of your current holdings, cash balance, and live Profit & Loss (P&L).
+```
+src/
+├── data_handler.py        # Alpaca data client (stocks)
+├── execution.py           # Alpaca trading client (stocks / fallback legging)
+├── options/
+│   ├── greeks.py          # Black-Scholes pricing + strike-by-delta solver
+│   ├── data_handler.py    # Option snapshots, IV estimation, chain filtering
+│   └── multileg.py        # Debit/credit payload builder for multi-leg orders
+└── strategies/
+	├── pairs_trade.py     # Rolling z-score equity spread engine
+	└── option_pairs.py    # Vega-neutral option spread strategy
+```
 
-trading-bot/
-├── .git/                     <-- Git's internal folder
-├── .gitignore                <-- **CRITICAL: Ignores secrets and clutter**
-├── .env                      <-- **SECRET: Your API keys (NEVER COMMIT)**
-├── .env.example              <-- Template showing keys needed (COMMIT THIS)
-├── README.md                 <-- Project goals, install steps, how to run
-├── requirements.txt          <-- Your Python libraries (pandas, numpy, etc.)
-│
-├── notebooks/
-│   ├── 01_strategy_research.ipynb  <-- Your "lab" for testing HMM, O-U, etc.
-│   ├── 02_backtest_viz.ipynb     <-- For analyzing backtest results
-│   └── 03_mc_simulation.ipynb    <-- For your Monte Carlo risk tests
-│
-├── src/
-│   ├── __init__.py
-│   ├── main.py               <-- Main entry point to run the *live* bot
-│   ├── strategies/
-│   │   ├── __init__.py
-│   │   ├── base_strategy.py    <-- A base class for all strategies
-│   │   └── hmm_regime.py       <-- Your Markov Chain logic goes here
-│   │   └── pairs_trade.py      <-- Your Ornstein-Uhlenbeck (mean-reversion) logic
-│   │
-│   ├── backtester.py         <-- Your code for running historical tests
-│   ├── data_handler.py       <-- Connects to APIs (Alpaca/yfinance)
-│   ├── execution.py          <-- Generates and sends orders to the broker
-│   ├── risk_manager.py       <-- Handles stop-losses, position sizing (VaR)
-│   └── utils.py              <-- Helper functions
-│
-├── tests/
-│   ├── __init__.py
-│   ├── test_strategies.py    <-- Unit tests for your math!
-│   └── test_data_handler.py  <-- Tests your API connection logic
-│
-└── config.ini                <-- **Non-secret** config (e.g., tradeable symbols)
-                              (You can add this to .gitignore too if you prefer)
-                              
+## Equity Pairs Quickstart
 
-## Hypothesis from Markov Chains: Market Regime Switching
+1. Load data + find candidates via `notebooks/0_find_pairs.ipynb` (exports `data/cointegrated_pairs.csv`).
+2. Backtest and compare against SPY with `notebooks/01_run_backtests.ipynb` or call `PairsTradeStrategy.run_backtest` directly.
+3. In live mode, instantiate `PairsTradeStrategy(data_handler, execution_handler, symbol_a, symbol_b, hedge_ratio)` and call `generate_signal()` inside your loop.
 
-Concept: A stock's behavior (its volatility and drift) is not constant. It switches between "regimes" (e.g., low-volatility/bullish, high-volatility/bearish). A Markov process is perfect for modeling the probability of switching from Regime A to Regime B.
+## Option Vega-Neutral Pairs Strategy
 
-Strategy: Use a Hidden Markov Model (HMM). You feed it market data (like daily returns or volatility), and it identifies the hidden "regimes."
+The option stack lives in `src/options/` and plugs into `OptionPairsStrategy`:
 
-Your Bot's Logic:
+- `GreeksCalculator` exposes Black-Scholes pricing, greeks, and strike-by-delta search. It can optionally lean on `py_vollib_vectorized` for vectorized notebooks.
+- `OptionDataHandler` estimates implied volatility from your underlying history, solves for the target-delta strike, and surfaces a complete option snapshot (price, delta, vega, theta, gamma).
+- `MultiLegExecutionHelper` prepares multi-leg debit/credit payloads. If the broker lacks complex-order APIs it gracefully falls back to sequential leg execution using `ExecutionHandler`.
+- `OptionPairsStrategy` mirrors the equity approach but sizes the hedge leg by vega, marks to model in backtests, and emits option-specific leg dictionaries you can send to the helper.
 
-If the HMM signals you are in a "high-vol, bearish" regime, your bot might switch to a "market-neutral" or "short-bias" strategy.
+To walk through the workflow end-to-end, open `notebooks/02_option_pair_trading.ipynb`:
 
-If it signals a "low-vol, bullish" regime, it might deploy a "trend-following" strategy.
+1. Load your preferred pair and estimate IV via `OptionDataHandler`.
+2. Configure target delta / days-to-expiry / thresholds.
+3. Backtest with `OptionPairsStrategy.run_backtest`, then flip to live by wiring `multi_leg_execution.execute(strategy.generate_signal())` inside your loop.
 
-## Hypothesis from Brownian Motion: Mean Reversion (Pairs Trading)
+## Development
 
-Concept: A single stock (like in the Black-Scholes model) is modeled as a GBM, which is a martingale in the risk-neutral world (it has no "memory"). You can't predict its next move. BUT... what if you could find a combination of assets that is not a martingale?
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+pytest
+```
 
-Strategy: Find two highly correlated stocks (e.g., Coke and Pepsi). Create a "spread" between them (e.g., Price(Coke) - k * Price(Pepsi)). While each stock is a random walk, the spread might be stationary and mean-reverting. This spread can be modeled with an Ornstein-Uhlenbeck process (a modification of Brownian motion that gets "pulled" back to a long-term mean).
+`pytest` now includes `tests/test_option_strategy.py`, which exercises the greeks utility, option data handler, multi-leg helper, and the option strategy signal flow.
 
-Your Bot's Logic:
-
-Your model continuously calculates the spread.
-
-When the spread becomes 2 standard deviations wider than its mean, your bot sells the expensive stock and buys the cheap one.
-
-When the spread reverts back to the mean, the bot closes both positions for a profit.
