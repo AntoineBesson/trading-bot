@@ -8,9 +8,9 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from .base_strategy import BaseStrategy
-from ..options.data_handler import OptionDataHandler, OptionSnapshot
-from ..options.multileg import MultiLegExecutionHelper
+from strategies.base_strategy import BaseStrategy
+from options.data_handler import OptionDataHandler, OptionSnapshot
+from options.multileg import MultiLegExecutionHelper
 
 Signal = Dict[str, object]
 

@@ -3,7 +3,8 @@ import sys
 import signal
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, time as dtime
+import pytz
 from dotenv import load_dotenv
 import pandas as pd
 
@@ -176,6 +177,22 @@ class TradingBot:
             ", ".join(getattr(s, "name", s.__class__.__name__) + f"({s.symbol_a}/{s.symbol_b})" for s in self.strategies),
         )
 
+    def is_market_open(self):
+        """Checks if the US market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)."""
+        tz = pytz.timezone('US/Eastern')
+        now = datetime.now(tz)
+        
+        # Check for weekend (Saturday=5, Sunday=6)
+        if now.weekday() >= 5:
+            return False
+
+        # Check time (09:30 - 16:00)
+        market_open = dtime(9, 30)
+        market_close = dtime(16, 0)
+        current_time = now.time()
+
+        return market_open <= current_time <= market_close
+
     def handle_exit_signal(self, signum, frame):
         """Handles Ctrl+C or kill signals to stop the bot gracefully."""
         logger.info("Shutdown signal received. Finishing current iteration...")
@@ -189,7 +206,13 @@ class TradingBot:
         
         while self.keep_running:
             try:
-                # --- 0. Periodic Universe Scan ---
+                # --- 0. Market Hours Check ---
+                if not self.is_market_open():
+                    logger.info("Market is closed. Sleeping for 5 minutes...")
+                    time.sleep(300) # Sleep 5 minutes
+                    continue
+
+                # --- 1. Periodic Universe Scan ---
                 if time.time() - last_scan > SCAN_INTERVAL:
                     logger.info("Scheduled universe scan triggered.")
                     self.rebalance_strategies()
@@ -200,10 +223,10 @@ class TradingBot:
                     symbols = getattr(strategy, "symbols", [])
                     pair_desc = "/".join(symbols) if symbols else getattr(strategy, "symbol_a", name)
 
-                    # --- 1. Heartbeat ---
+                    # --- 2. Heartbeat ---
                     logger.info(f"[{name}] Checking market data for {pair_desc}...")
 
-                    # --- 2. Generate & Execute Signals ---
+                    # --- 3. Generate & Execute Signals ---
                     signals = strategy.generate_signal()
 
                     if signals:
@@ -215,7 +238,7 @@ class TradingBot:
                         else:
                             logger.info(f"[{name}] No trade. Criteria not met.")
 
-                # --- 3. Sleep ---
+                # --- 4. Sleep ---
                 # Wait for the next check (e.g., 1 minute)
                 time.sleep(SLEEP_DELAY)
 

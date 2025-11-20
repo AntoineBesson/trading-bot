@@ -6,8 +6,59 @@ import statsmodels.api as sm
 from statsmodels.tsa.stattools import adfuller
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
+from concurrent.futures import ProcessPoolExecutor
 
 logger = logging.getLogger(__name__)
+
+def evaluate_pair(args):
+    """
+    Worker function to evaluate a single pair.
+    Must be at module level for multiprocessing on Windows.
+    """
+    sym_a, sym_b, series_a, series_b, p_threshold, z_threshold = args
+    
+    try:
+        # OLS: Y = beta * X + alpha
+        # series_a = hedge_ratio * series_b + intercept
+        X = sm.add_constant(series_b)
+        model = sm.OLS(series_a, X).fit()
+        hedge_ratio = model.params.iloc[1]
+        intercept = model.params.iloc[0]
+        
+        # Spread
+        spread = series_a - (hedge_ratio * series_b + intercept)
+        
+        # ADF Test on spread
+        # autolag='AIC' is default but explicit is good. 
+        # maxlag=1 is faster but less accurate. Let's stick to default or None.
+        adf_result = adfuller(spread)
+        p_value = adf_result[1]
+        
+        # Z-Score
+        spread_mean = spread.mean()
+        spread_std = spread.std()
+        current_spread = spread.iloc[-1]
+        
+        if spread_std == 0:
+            z_score = 0
+        else:
+            z_score = (current_spread - spread_mean) / spread_std
+            
+        # Check thresholds
+        if p_value < p_threshold and abs(z_score) < z_threshold:
+            return {
+                'symbol_a': sym_a,
+                'symbol_b': sym_b,
+                'hedge_ratio': hedge_ratio,
+                'p_value': p_value,
+                'current_z_score': z_score,
+                'timestamp': datetime.now()
+            }
+            
+    except Exception:
+        return None
+        
+    return None
 
 class UniverseManager:
     """
@@ -88,70 +139,37 @@ class UniverseManager:
 
         new_watchlist = []
 
-        # 3. Test Pairs
+        # 3. Test Pairs (Multiprocessing)
+        logger.info(f"Testing {len(pairs)} pairs using multiprocessing...")
+        
+        tasks = []
         for sym_a, sym_b in pairs:
-            try:
-                series_a = prices_df[sym_a]
-                series_b = prices_df[sym_b]
-                
-                # Run Cointegration Test
-                hedge_ratio, p_value, spread, z_score = self._test_cointegration(series_a, series_b)
-                
-                # Filter Logic
-                # 1. Statistically significant cointegration
-                if p_value < self.p_value_threshold:
-                    # 2. Current spread is not already blown out (optional, but requested "near 0")
-                    # We use a loose threshold (e.g. < 2.0) to ensure we don't enter late, 
-                    # but user specifically asked for "near 0". Let's use the configured threshold.
-                    if abs(z_score) < self.z_score_threshold:
-                        logger.info(f"Found Pair: {sym_a}/{sym_b} (p={p_value:.4f}, z={z_score:.2f})")
-                        new_watchlist.append({
-                            'symbol_a': sym_a,
-                            'symbol_b': sym_b,
-                            'hedge_ratio': hedge_ratio,
-                            'p_value': p_value,
-                            'current_z_score': z_score,
-                            'timestamp': datetime.now()
-                        })
-            except Exception as e:
-                logger.debug(f"Error testing pair {sym_a}/{sym_b}: {e}")
-                continue
+            tasks.append((
+                sym_a, 
+                sym_b, 
+                prices_df[sym_a], 
+                prices_df[sym_b], 
+                self.p_value_threshold, 
+                self.z_score_threshold
+            ))
+            
+        new_watchlist = []
+        
+        # Use ProcessPoolExecutor to parallelize the work
+        # max_workers=None defaults to the number of processors on the machine
+        with ProcessPoolExecutor() as executor:
+            # chunksize can be tuned. For 126k pairs, 100-500 is reasonable.
+            results = executor.map(evaluate_pair, tasks, chunksize=500)
+            
+            for res in results:
+                if res:
+                    logger.info(f"Found Pair: {res['symbol_a']}/{res['symbol_b']} (p={res['p_value']:.4f}, z={res['current_z_score']:.2f})")
+                    new_watchlist.append(res)
 
         self.watchlist = new_watchlist
         self.last_scan_time = datetime.now()
         logger.info(f"Scan complete. Found {len(self.watchlist)} valid pairs.")
         return self.watchlist
-
-    def _test_cointegration(self, series_a: pd.Series, series_b: pd.Series) -> Tuple[float, float, pd.Series, float]:
-        """
-        Performs Engle-Granger cointegration test.
-        Returns: (hedge_ratio, p_value, spread_series, current_z_score)
-        """
-        # OLS: Y = beta * X + alpha
-        # series_a = hedge_ratio * series_b + intercept
-        X = sm.add_constant(series_b)
-        model = sm.OLS(series_a, X).fit()
-        hedge_ratio = model.params.iloc[1]
-        intercept = model.params.iloc[0]
-        
-        # Spread
-        spread = series_a - (hedge_ratio * series_b + intercept)
-        
-        # ADF Test on spread
-        adf_result = adfuller(spread)
-        p_value = adf_result[1]
-        
-        # Z-Score of the *current* spread value relative to the window
-        spread_mean = spread.mean()
-        spread_std = spread.std()
-        current_spread = spread.iloc[-1]
-        
-        if spread_std == 0:
-            z_score = 0
-        else:
-            z_score = (current_spread - spread_mean) / spread_std
-            
-        return hedge_ratio, p_value, spread, z_score
 
     def get_watchlist(self) -> List[Dict]:
         return self.watchlist
