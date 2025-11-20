@@ -97,6 +97,14 @@ class UniverseManager:
         self.max_pairs = max_pairs
         self.watchlist: List[Dict] = []
         self.last_scan_time = None
+        
+        # Blacklist: Avoid dual-class shares (same company)
+        self.blacklist = {
+            frozenset({'GOOG', 'GOOGL'}),
+            frozenset({'FOX', 'FOXA'}),
+            frozenset({'NWS', 'NWSA'}),
+            frozenset({'UA', 'UAA'}),
+        }
 
     def scan(self) -> List[Dict]:
         """
@@ -170,6 +178,10 @@ class UniverseManager:
         
         tasks = []
         for sym_a, sym_b in pairs_to_test:
+            # Skip blacklisted pairs
+            if frozenset({sym_a, sym_b}) in self.blacklist:
+                continue
+
             tasks.append((
                 sym_a, 
                 sym_b, 
@@ -197,6 +209,22 @@ class UniverseManager:
         # Sort by P-Value (ascending) - strongest cointegration first
         new_watchlist.sort(key=lambda x: x['p_value'])
         
+        # --- Unique Symbol Filter ---
+        # Ensure each stock appears in only ONE pair (the best one)
+        unique_watchlist = []
+        used_symbols = set()
+
+        for pair in new_watchlist:
+            sym_a = pair['symbol_a']
+            sym_b = pair['symbol_b']
+            
+            if sym_a not in used_symbols and sym_b not in used_symbols:
+                unique_watchlist.append(pair)
+                used_symbols.add(sym_a)
+                used_symbols.add(sym_b)
+        
+        new_watchlist = unique_watchlist
+
         # Take top N
         if len(new_watchlist) > self.max_pairs:
             logger.info(f"Limiting watchlist to top {self.max_pairs} pairs (from {len(new_watchlist)} found).")
