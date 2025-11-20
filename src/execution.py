@@ -36,6 +36,26 @@ class ExecutionHandler:
         )
         print("Execution Handler (alpaca-py) initialized.")
 
+    def get_all_positions(self):
+        """
+        Retrieves all open positions from the broker.
+        """
+        try:
+            return self.api.get_all_positions()
+        except Exception as e:
+            print(f"Error fetching positions: {e}")
+            return []
+
+    def close_position(self, symbol):
+        """
+        Closes a position for a specific symbol.
+        """
+        try:
+            self.api.close_position(symbol_or_asset_id=symbol)
+            print(f"Closed position for {symbol}")
+        except Exception as e:
+            print(f"Error closing position for {symbol}: {e}")
+
     def execute_order(self, signal):
         """
         Places an order with the broker based on a signal.

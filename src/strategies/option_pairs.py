@@ -22,6 +22,8 @@ Signal = Dict[str, object]
 class OptionPairsStrategy(BaseStrategy):
     data_handler: object
     execution_handler: object
+    portfolio_manager: object # NEW: The CFO
+    strategy_id: str          # NEW: Unique ID
     symbol_a: str
     symbol_b: str
     option_type: str = "call"
@@ -47,6 +49,8 @@ class OptionPairsStrategy(BaseStrategy):
         super().__init__(
             data_handler=self.data_handler,
             execution_handler=self.execution_handler,
+            portfolio_manager=self.portfolio_manager,
+            strategy_id=self.strategy_id,
             symbols=[self.symbol_a, self.symbol_b],
         )
         self.option_data = self.option_data_handler or OptionDataHandler(self.data_handler)
@@ -287,6 +291,28 @@ class OptionPairsStrategy(BaseStrategy):
         
         logger.info(f"Vol Target Sizing: Equity=${equity:.0f}, Risk=${risk_amount:.0f}, Vol=${volatility_proxy:.2f} -> {target_contracts} contracts")
 
+        # --- Portfolio Manager Cap ---
+        if "open" in action:
+            remaining_budget = self.portfolio_manager.get_remaining_budget(self.strategy_id)
+            
+            cost_per_unit = 0.0
+            if action == "open_short":
+                # We buy B. Quantity is target * vega_ratio
+                cost_per_unit = self._vega_ratio * snap_b.ask * 100
+            elif action == "open_long":
+                # We buy A. Quantity is target
+                cost_per_unit = snap_a.ask * 100
+                
+            if cost_per_unit > 0:
+                max_contracts_budget = int(remaining_budget // cost_per_unit)
+                if max_contracts_budget < target_contracts:
+                    logger.info(f"[{self.strategy_id}] Capping trade due to budget. Req: {target_contracts}, Allowed: {max_contracts_budget}")
+                    target_contracts = max_contracts_budget
+                    
+                if target_contracts < 1:
+                    logger.warning(f"[{self.strategy_id}] Insufficient budget for even 1 contract.")
+                    return []
+
         if action == "open_short":
             # Short the spread: Sell A, Buy B
             qty_a = target_contracts
@@ -477,6 +503,58 @@ class OptionPairsStrategy(BaseStrategy):
     @staticmethod
     def _iso_days_ago(days: int) -> str:
         return (datetime.now(UTC) - timedelta(days=days)).date().isoformat()
+
+    def reconcile(self, positions_map: Dict[str, object]):
+        """
+        Checks if the bot is already in a trade for this pair.
+        """
+        # Check if we hold the option legs
+        # Note: This is tricky for options because symbols change (e.g. MSFT230519C00300000)
+        # We check if any key in positions_map STARTS with self.symbol_a or self.symbol_b
+        
+        found_legs = []
+        
+        for symbol, position in positions_map.items():
+            # Basic check: does the position symbol start with our underlying?
+            # This assumes standard OCC option symbology where underlying is at the start
+            if symbol.startswith(self.symbol_a) or symbol.startswith(self.symbol_b):
+                # Verify it's an option (length check or other heuristic if needed)
+                # For now, we assume if it matches and we are an option strategy, it's ours.
+                # In a real production system, we'd check the 'asset_class' attribute of the position.
+                if getattr(position, 'asset_class', 'us_equity') == 'us_option':
+                    found_legs.append(symbol)
+        
+        if found_legs:
+            logger.info(f"[{self.strategy_id}] Found existing option positions: {found_legs}")
+            self.position = "invested"
+            # Store them if we want to manage them specifically
+            # self.active_legs = found_legs 
+        else:
+            self.position = "flat"
+            logger.info(f"[{self.strategy_id}] No existing positions found.")
+
+    def kill_switch(self):
+        """
+        Closes all option positions related to this strategy's symbols.
+        """
+        logger.warning(f"[{self.strategy_id}] KILL SWITCH: Closing positions for {self.symbol_a}/{self.symbol_b}")
+        
+        # We need to find the positions again to close them
+        # Since we don't store them persistently, we query the execution handler
+        try:
+            all_positions = self.execution_handler.get_all_positions()
+            for position in all_positions:
+                symbol = position.symbol
+                if (symbol.startswith(self.symbol_a) or symbol.startswith(self.symbol_b)) and \
+                   getattr(position, 'asset_class', 'us_equity') == 'us_option':
+                    
+                    logger.info(f"[{self.strategy_id}] Closing position: {symbol}")
+                    self.execution_handler.close_position(symbol)
+                    
+            self.position = "flat"
+            
+        except Exception as e:
+            logger.error(f"[{self.strategy_id}] Kill switch failed: {e}")
 
 
 __all__ = ["OptionPairsStrategy"]

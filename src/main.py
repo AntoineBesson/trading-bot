@@ -19,6 +19,9 @@ from strategies.option_pairs import OptionPairsStrategy
 from options.data_handler import OptionDataHandler
 from options.multileg import MultiLegExecutionHelper
 from universe_manager import UniverseManager
+from portfolio_manager import PortfolioManager
+from strategy_manager import StrategyManager
+from strategies_config import create_option_pair_config
 
 # --- Configuration ---
 # How often the bot checks for signals (in seconds)
@@ -55,11 +58,15 @@ class TradingBot:
             logger.critical(f"Failed to initialize handlers: {e}")
             sys.exit(1)
 
-        # 3. Initialize Strategy Stack
+        # 3. Initialize Managers (The New Architecture)
+        self.pm = PortfolioManager(self.dh)
+        self.sm = StrategyManager(self.dh, self.eh, self.pm)
+        
+        # 4. Initialize Helpers
         self.option_data_handler = OptionDataHandler(self.dh)
         self.multi_leg_helper = MultiLegExecutionHelper(self.eh)
         
-        # 4. Initialize Universe Manager
+        # 5. Initialize Universe Manager
         try:
             # This assumes your CSV has a column header named "symbol"
             self.universe = pd.read_csv("data/universe.csv")['symbol'].tolist()
@@ -128,13 +135,15 @@ class TradingBot:
             z_score_threshold=1.5
         )
         
-        logger.info("Initializing strategies...")
-        self.strategies = []
-        self.rebalance_strategies() # Initial scan and build
-        
-        # 5. Register Signal Handlers (for graceful shutdown)
-        signal.signal(signal.SIGINT, self.handle_exit_signal)
-        signal.signal(signal.SIGTERM, self.handle_exit_signal)
+        # 6. Initial Strategy Setup
+        self.rebalance_strategies()
+
+        # 7. Reconcile State (Find existing trades)
+        self.sm.reconcile_positions()
+
+        # 8. Signal Handling
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
 
     def rebalance_strategies(self):
         """Scans the universe and rebuilds the strategy list."""
@@ -143,39 +152,24 @@ class TradingBot:
         # 1. Scan for pairs
         watchlist = self.universe_manager.scan()
         
-        # 2. Build Strategies from Watchlist
-        new_strategies = []
+        # 2. Build Strategy Configs
+        strategy_configs = []
         for item in watchlist:
             sym_a = item['symbol_a']
             sym_b = item['symbol_b']
-            # hedge_ratio = item['hedge_ratio'] # Used for equity pairs, option strategy calculates its own
             
-            logger.info(f"Adding strategy for pair: {sym_a}/{sym_b}")
+            # Generate config from template
+            config = create_option_pair_config(sym_a, sym_b, allocation=5000.0)
             
-            # Add Option Pairs Strategy
-            new_strategies.append(
-                OptionPairsStrategy(
-                    data_handler=self.dh,
-                    execution_handler=self.eh,
-                    symbol_a=sym_a,
-                    symbol_b=sym_b,
-                    option_type="call", # Default to calls
-                    target_delta=0.45,
-                    days_to_expiry=30,
-                    entry_threshold=2.0, # Enter when Z-score hits 2.0 (as requested)
-                    exit_threshold=0.0,
-                    contracts=1,
-                    auto_execute=True,
-                    option_data_handler=self.option_data_handler,
-                    multi_leg_execution=self.multi_leg_helper,
-                )
-            )
+            # Inject Runtime Dependencies
+            # These objects exist in 'self' but are needed by the strategy instance
+            config['parameters']['option_data_handler'] = self.option_data_handler
+            config['parameters']['multi_leg_execution'] = self.multi_leg_helper
             
-        self.strategies = new_strategies
-        logger.info(
-            "Active strategies: %s",
-            ", ".join(getattr(s, "name", s.__class__.__name__) + f"({s.symbol_a}/{s.symbol_b})" for s in self.strategies),
-        )
+            strategy_configs.append(config)
+            
+        # 3. Update Strategy Manager
+        self.sm.update_strategies(strategy_configs)
 
     def is_market_open(self):
         """Checks if the US market is currently open (9:30 AM - 4:00 PM ET, Mon-Fri)."""
@@ -193,10 +187,11 @@ class TradingBot:
 
         return market_open <= current_time <= market_close
 
-    def handle_exit_signal(self, signum, frame):
+    def signal_handler(self, signum, frame):
         """Handles Ctrl+C or kill signals to stop the bot gracefully."""
         logger.info("Shutdown signal received. Finishing current iteration...")
         self.keep_running = False
+        self.sm.kill_all() # Optional: Close positions on exit
 
     def run(self):
         """The main infinite loop."""
@@ -218,27 +213,10 @@ class TradingBot:
                     self.rebalance_strategies()
                     last_scan = time.time()
 
-                for strategy in self.strategies:
-                    name = getattr(strategy, "name", strategy.__class__.__name__)
-                    symbols = getattr(strategy, "symbols", [])
-                    pair_desc = "/".join(symbols) if symbols else getattr(strategy, "symbol_a", name)
+                # --- 2. Run Strategies ---
+                self.sm.run_tick()
 
-                    # --- 2. Heartbeat ---
-                    logger.info(f"[{name}] Checking market data for {pair_desc}...")
-
-                    # --- 3. Generate & Execute Signals ---
-                    signals = strategy.generate_signal()
-
-                    if signals:
-                        logger.info(f"[{name}] Signals generated: {signals}")
-                    else:
-                        z_score = getattr(strategy, "last_z_score", None)
-                        if z_score is not None:
-                            logger.info(f"[{name}] No trade. Z-Score: {z_score:.4f}")
-                        else:
-                            logger.info(f"[{name}] No trade. Criteria not met.")
-
-                # --- 4. Sleep ---
+                # --- 3. Sleep ---
                 # Wait for the next check (e.g., 1 minute)
                 time.sleep(SLEEP_DELAY)
 
