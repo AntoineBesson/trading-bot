@@ -206,6 +206,8 @@ class TradingBot:
                     logger.info("Market is closed. Sleeping for 5 minutes...")
                     time.sleep(300) # Sleep 5 minutes
                     continue
+                
+                logger.info("Starting new tick...")
 
                 # --- 1. Periodic Universe Scan ---
                 if time.time() - last_scan > SCAN_INTERVAL:
@@ -218,6 +220,7 @@ class TradingBot:
 
                 # --- 3. Sleep ---
                 # Wait for the next check (e.g., 1 minute)
+                logger.info(f"Tick complete. Sleeping for {SLEEP_DELAY} seconds...")
                 time.sleep(SLEEP_DELAY)
 
             except Exception as e:

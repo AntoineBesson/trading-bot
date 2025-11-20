@@ -514,10 +514,13 @@ class OptionPairsStrategy(BaseStrategy):
     def _iso_days_ago(days: int) -> str:
         return (datetime.now(UTC) - timedelta(days=days)).date().isoformat()
 
-    def reconcile(self, positions_map: Dict[str, object]):
+    def reconcile(self, positions_map: Optional[Dict[str, object]] = None):
         """
         Checks if the bot is already in a trade for this pair.
         """
+        if positions_map is None:
+            return
+
         # Check if we hold the option legs
         # Note: This is tricky for options because symbols change (e.g. MSFT230519C00300000)
         # We check if any key in positions_map STARTS with self.symbol_a or self.symbol_b
