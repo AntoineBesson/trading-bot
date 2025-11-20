@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import logging
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ if not load_dotenv(env_path):
     # Fallback to default search so users running outside the repo root still load secrets
     load_dotenv()
 
+logger = logging.getLogger(__name__)
 
 class DataHandler:
     """
@@ -50,6 +52,7 @@ class DataHandler:
         :param end: End date (e.g., '2021-01-01')
         :return: A dictionary of pandas DataFrames, one for each symbol.
         """
+        logger.info(f"[API] Fetching historical {timeframe_str} bars for {len(symbols)} symbols ({symbols[0]}...)")
         
         # --- 1. Robust TimeFrame Mapping (This is correct) ---
         tf_map = {
@@ -118,11 +121,11 @@ class DataHandler:
             traceback.print_exc()
             return None
         
-    def get_latest_bar(self, symbol):
+    def get_latest_bar(self, symbol: str) -> dict:
         """
-        Fetches the single latest bar for a symbol.
-        Note: This is less efficient, use get_historical_bars if possible.
+        Fetches the latest bar for a single symbol.
         """
+        logger.info(f"[API] Fetching latest quote for {symbol}")
         try:
             # We must use the StockHistoricalDataClient for this
             # (No direct 'get_latest_bar' in alpaca-py)

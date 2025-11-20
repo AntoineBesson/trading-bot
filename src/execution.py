@@ -1,5 +1,8 @@
 import os
 from dotenv import load_dotenv
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- Imports for the NEW 'alpaca-py' library ---
 from alpaca.trading.client import TradingClient
@@ -59,18 +62,11 @@ class ExecutionHandler:
     def execute_order(self, signal):
         """
         Places an order with the broker based on a signal.
-        
-        :param signal: A dictionary containing order details.
-                       e.g., {
-                           'symbol': 'AAPL',
-                           'action': 'buy',  # 'buy' or 'sell'
-                           'qty': 10,
-                           'type': 'market', # 'market', 'limit'
-                           'time_in_force': 'gtc' # 'gtc', 'day'
-                           # 'limit_price': 150.00 (if type is 'limit')
-                       }
-        :return: The order object from the API, or None if failed.
         """
+        # Log the attempt
+        if signal:
+            logger.info(f"[API] Submitting Order: {signal.get('action', '').upper()} {signal.get('qty')} {signal.get('symbol')} @ {signal.get('type', '').upper()}")
+        
         print(f"Attempting to execute order: {signal}")
         
         # --- Input Validation ---

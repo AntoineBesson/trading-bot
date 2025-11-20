@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Callable, Dict, Iterable, Optional
@@ -93,6 +97,7 @@ class OptionDataHandler:
         days_to_expiry: int = 30,
         implied_vol: Optional[float] = None,
     ) -> Optional[OptionSnapshot]:
+        logger.info(f"[API] Requesting Option Chain for {symbol} (Exp: ~{days_to_expiry}d, Delta: {target_delta})")
         spot = self._latest_close(symbol)
         if spot is None:
             return None

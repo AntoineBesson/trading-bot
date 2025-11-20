@@ -112,10 +112,16 @@ class OptionPairsStrategy(BaseStrategy):
         spread = snap_a.price - self._vega_ratio * snap_b.price
         z_score = self._compute_z_score(spread)
         self.last_z_score = z_score
+        
+        # NEW LOG: The "Heartbeat" of the strategy
+        logger.info(f"[{self.strategy_id}] Z-Score: {z_score:.2f} | Threshold: {self.entry_threshold} | Position: {self.position}")
 
         action = self._determine_action(z_score)
         if action == "none":
+            logger.info(f"[{self.strategy_id}] No trade. Spread is normal.")
             return []
+            
+        logger.info(f"[{self.strategy_id}] Action triggered: {action} (Z={z_score:.2f})")
 
         trade_option_type = self._option_type_for_action(action)
         trade_snaps = self._get_snapshots(trade_option_type)
@@ -124,6 +130,10 @@ class OptionPairsStrategy(BaseStrategy):
 
         trade_snap_a, trade_snap_b = trade_snaps
         signals = self._dispatch_action(action, trade_snap_a, trade_snap_b)
+        
+        if signals:
+            logger.info(f"[{self.strategy_id}] Generating orders for {action}")
+            
         if self.auto_execute and signals:
             self.multi_leg_exec.execute(signals)
         return signals
