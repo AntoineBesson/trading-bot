@@ -15,7 +15,7 @@ def evaluate_pair(args):
     Worker function to evaluate a single pair.
     Must be at module level for multiprocessing on Windows.
     """
-    sym_a, sym_b, series_a, series_b, p_threshold, z_threshold = args
+    sym_a, sym_b, series_a, series_b, p_threshold, z_threshold, min_crossings = args
     
     try:
         # OLS: Y = beta * X + alpha
@@ -44,14 +44,23 @@ def evaluate_pair(args):
         else:
             z_score = (current_spread - spread_mean) / spread_std
             
+        # Zero Crossings Count
+        # Count how many times the spread crossed the mean
+        centered_spread = spread - spread_mean
+        zero_crossings = ((centered_spread * centered_spread.shift(1)) < 0).sum()
+
         # Check thresholds
-        if p_value < p_threshold and abs(z_score) < z_threshold:
+        # 1. P-Value (Cointegration strength)
+        # 2. Z-Score (Current deviation)
+        # 3. Zero Crossings (Mean reversion frequency)
+        if p_value < p_threshold and abs(z_score) < z_threshold and zero_crossings >= min_crossings:
             return {
                 'symbol_a': sym_a,
                 'symbol_b': sym_b,
                 'hedge_ratio': hedge_ratio,
                 'p_value': p_value,
                 'current_z_score': z_score,
+                'zero_crossings': zero_crossings,
                 'timestamp': datetime.now()
             }
             
@@ -70,9 +79,12 @@ class UniverseManager:
         data_handler,
         universe: List[str],
         lookback_days: int = 180,
-        p_value_threshold: float = 0.05,
-        z_score_threshold: float = 1, # Threshold for "near 0" filter (e.g. < 1.5 means not currently in extreme breakout)
-        min_history_days: int = 100
+        p_value_threshold: float = 0.01, # Stricter default (was 0.05)
+        z_score_threshold: float = 1.5, 
+        min_history_days: int = 100,
+        correlation_threshold: float = 0.9,
+        min_zero_crossings: int = 15, # Minimum mean reversions
+        max_pairs: int = 30 # Limit result size
     ):
         self.dh = data_handler
         self.universe = universe
@@ -80,6 +92,9 @@ class UniverseManager:
         self.p_value_threshold = p_value_threshold
         self.z_score_threshold = z_score_threshold
         self.min_history_days = min_history_days
+        self.correlation_threshold = correlation_threshold
+        self.min_zero_crossings = min_zero_crossings
+        self.max_pairs = max_pairs
         self.watchlist: List[Dict] = []
         self.last_scan_time = None
 
@@ -134,23 +149,35 @@ class UniverseManager:
             return []
 
         valid_symbols = prices_df.columns.tolist()
-        pairs = list(itertools.combinations(valid_symbols, 2))
-        logger.info(f"Testing {len(pairs)} pairs from {len(valid_symbols)} valid symbols.")
+        
+        # --- Vectorized Step 1: Correlation Filter ---
+        logger.info("Calculating correlation matrix...")
+        returns_df = prices_df.pct_change().dropna()
+        corr_matrix = returns_df.corr()
+        
+        # Filter for high correlation
+        # Keep only upper triangle to avoid duplicates and self-correlation
+        mask = np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+        candidates = corr_matrix.where(mask).stack()
+        
+        high_corr_pairs = candidates[candidates > self.correlation_threshold]
+        pairs_to_test = high_corr_pairs.index.tolist() # List of (sym_a, sym_b) tuples
+        
+        logger.info(f"Correlation filter reduced pairs from {len(valid_symbols)*(len(valid_symbols)-1)//2} to {len(pairs_to_test)}.")
 
-        new_watchlist = []
-
-        # 3. Test Pairs (Multiprocessing)
-        logger.info(f"Testing {len(pairs)} pairs using multiprocessing...")
+        # --- Step 2: Cointegration Test (Multiprocessing on reduced set) ---
+        logger.info(f"Testing {len(pairs_to_test)} pairs using multiprocessing...")
         
         tasks = []
-        for sym_a, sym_b in pairs:
+        for sym_a, sym_b in pairs_to_test:
             tasks.append((
                 sym_a, 
                 sym_b, 
                 prices_df[sym_a], 
                 prices_df[sym_b], 
                 self.p_value_threshold, 
-                self.z_score_threshold
+                self.z_score_threshold,
+                self.min_zero_crossings
             ))
             
         new_watchlist = []
@@ -163,8 +190,22 @@ class UniverseManager:
             
             for res in results:
                 if res:
-                    logger.info(f"Found Pair: {res['symbol_a']}/{res['symbol_b']} (p={res['p_value']:.4f}, z={res['current_z_score']:.2f})")
+                    logger.info(f"Found Pair: {res['symbol_a']}/{res['symbol_b']} (p={res['p_value']:.4f}, z={res['current_z_score']:.2f}, x={res['zero_crossings']})")
                     new_watchlist.append(res)
+
+        # Sort and Limit
+        # Sort by P-Value (ascending) - strongest cointegration first
+        new_watchlist.sort(key=lambda x: x['p_value'])
+        
+        # Take top N
+        if len(new_watchlist) > self.max_pairs:
+            logger.info(f"Limiting watchlist to top {self.max_pairs} pairs (from {len(new_watchlist)} found).")
+            new_watchlist = new_watchlist[:self.max_pairs]
+
+        self.watchlist = new_watchlist
+        self.last_scan_time = datetime.now()
+        logger.info(f"Scan complete. Found {len(self.watchlist)} valid pairs.")
+        return self.watchlist
 
         self.watchlist = new_watchlist
         self.last_scan_time = datetime.now()

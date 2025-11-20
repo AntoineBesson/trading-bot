@@ -6,11 +6,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
+import logging
 import pandas as pd
 
 from strategies.base_strategy import BaseStrategy
 from options.data_handler import OptionDataHandler, OptionSnapshot
 from options.multileg import MultiLegExecutionHelper
+
+logger = logging.getLogger(__name__)
 
 Signal = Dict[str, object]
 
@@ -30,6 +33,7 @@ class OptionPairsStrategy(BaseStrategy):
     entry_threshold: float = 1.0
     exit_threshold: float = 0.0
     contracts: int = 1
+    risk_per_trade: float = 0.01 # Risk 1% of account per trade
     timeframe: str = "1D"
     stat_refresh_days: int = 5
     auto_execute: bool = False
@@ -56,11 +60,45 @@ class OptionPairsStrategy(BaseStrategy):
         self.spread_std: Optional[float] = None
         self._last_stat_refresh: Optional[datetime] = None
         self._vega_ratio: float = 1.0
+        
+        # Equity Guard: Track last known stock prices
+        self.last_stock_price_a: Optional[float] = None
+        self.last_stock_price_b: Optional[float] = None
+        
         self._init_reference_distribution()
 
     # ------------------------------------------------------------------
     def generate_signal(self) -> List[Signal]:
         self._maybe_refresh_spread_stats()
+        
+        # --- OPTIMIZATION: Equity Guard ---
+        # Fetch underlying stock prices first (Fast/Cheap API call)
+        # Only proceed to expensive option chain lookup if stocks have moved significantly
+        bar_a = self.data_handler.get_latest_bar(self.symbol_a)
+        bar_b = self.data_handler.get_latest_bar(self.symbol_b)
+        
+        if bar_a and bar_b:
+            curr_a = bar_a['close']
+            curr_b = bar_b['close']
+            
+            # If we have previous prices, check if they moved enough to warrant an option lookup
+            if self.last_stock_price_a and self.last_stock_price_b:
+                pct_change_a = abs((curr_a - self.last_stock_price_a) / self.last_stock_price_a)
+                pct_change_b = abs((curr_b - self.last_stock_price_b) / self.last_stock_price_b)
+                
+                # If both stocks moved less than 0.1%, skip the heavy option call
+                # Unless we are IN a trade (we always want to monitor exits)
+                if pct_change_a < 0.001 and pct_change_b < 0.001 and self.position == "flat":
+                    # Update cache even if we skip
+                    self.last_stock_price_a = curr_a
+                    self.last_stock_price_b = curr_b
+                    return []
+
+            # Update cache
+            self.last_stock_price_a = curr_a
+            self.last_stock_price_b = curr_b
+        # --- END OPTIMIZATION ---
+
         pricing_snaps = self._get_snapshots(self.option_type)
         if pricing_snaps is None:
             return []
@@ -212,47 +250,100 @@ class OptionPairsStrategy(BaseStrategy):
         return self.long_option_type if self.position == "long" else self.short_option_type
 
     def _dispatch_action(self, action: str, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
+        # --- Volatility Targeting (The "Quant" Way) ---
+        # 1. Get Account Equity
+        try:
+            account = self.data_handler.get_account()
+            equity = float(account.equity) if account else self.initial_capital
+        except Exception:
+            equity = self.initial_capital
+
+        # 2. Calculate Risk Amount (e.g., 1% of $100k = $1,000)
+        risk_amount = equity * self.risk_per_trade
+
+        # 3. Calculate Volatility (Standard Deviation of the Spread)
+        # If spread_std is high, we trade smaller size.
+        # If spread_std is low, we trade larger size.
+        # We use the spread_std (dollar value of spread deviation) as a proxy for risk per unit.
+        # Ideally, we'd use the option's specific volatility, but spread vol is a good proxy for the pair.
+        volatility_proxy = self.spread_std if self.spread_std and self.spread_std > 0 else 1.0
+        
+        # 4. Calculate Position Size
+        # "I want to risk $1,000. One unit of risk is 1 Standard Deviation of the spread."
+        # Contracts = Risk Amount / (Volatility * Contract Multiplier)
+        # Multiplier is 100 for options.
+        # We also clamp it to be reasonable (e.g. not 0, not 1000 contracts).
+        
+        # Note: This assumes that a 1-sigma move against us represents our "Risk Unit".
+        # You can adjust this denominator to be 2*volatility if you want to survive a 2-sigma move.
+        raw_contracts = risk_amount / (volatility_proxy * 100)
+        
+        # Ensure we can afford it (Basic check against option price)
+        option_price = snap_a.ask if "open" in action else snap_a.bid
+        max_affordable = (equity * 0.5) / (option_price * 100) # Don't use >50% of account on one leg
+        
+        target_contracts = int(min(raw_contracts, max_affordable))
+        target_contracts = max(1, target_contracts) # Always trade at least 1
+        
+        logger.info(f"Vol Target Sizing: Equity=${equity:.0f}, Risk=${risk_amount:.0f}, Vol=${volatility_proxy:.2f} -> {target_contracts} contracts")
+
         if action == "open_short":
-            return self._open_short_spread(snap_a, snap_b)
-        if action == "open_long":
-            return self._open_long_spread(snap_a, snap_b)
-        if action == "close_short":
-            return self._close_short_spread(snap_a, snap_b)
-        if action == "close_long":
-            return self._close_long_spread(snap_a, snap_b)
+            # Short the spread: Sell A, Buy B
+            qty_a = target_contracts
+            qty_b = int(round(target_contracts * self._vega_ratio))
+            
+            self.position = "short"
+            self.position_option_type = self.short_option_type
+            self.open_qty_a = qty_a
+            self.open_qty_b = qty_b
+            
+            return [
+                self._build_leg(snap_a, "sell", qty_a),
+                self._build_leg(snap_b, "buy", qty_b),
+            ]
+        elif action == "open_long":
+            # Long the spread: Buy A, Sell B
+            qty_a = target_contracts
+            qty_b = int(round(target_contracts * self._vega_ratio))
+            
+            self.position = "long"
+            self.position_option_type = self.long_option_type
+            self.open_qty_a = qty_a
+            self.open_qty_b = qty_b
+            
+            return [
+                self._build_leg(snap_a, "buy", qty_a),
+                self._build_leg(snap_b, "sell", qty_b),
+            ]
+        elif action == "close_short":
+            # Close short: Buy A, Sell B
+            qty_a = getattr(self, 'open_qty_a', target_contracts) 
+            qty_b = getattr(self, 'open_qty_b', int(round(qty_a * self._vega_ratio)))
+            
+            self.position = "flat"
+            self.position_option_type = None
+            self.open_qty_a = 0
+            self.open_qty_b = 0
+            
+            return [
+                self._build_leg(snap_a, "buy", qty_a),
+                self._build_leg(snap_b, "sell", qty_b),
+            ]
+        elif action == "close_long":
+            # Close long: Sell A, Buy B
+            qty_a = getattr(self, 'open_qty_a', target_contracts)
+            qty_b = getattr(self, 'open_qty_b', int(round(qty_a * self._vega_ratio)))
+            
+            self.position = "flat"
+            self.position_option_type = None
+            self.open_qty_a = 0
+            self.open_qty_b = 0
+            
+            return [
+                self._build_leg(snap_a, "sell", qty_a),
+                self._build_leg(snap_b, "buy", qty_b),
+            ]
         return []
-
-    def _open_short_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
-        self.position = "short"
-        self.position_option_type = snap_a.option_type
-        return [
-            self._build_leg(snap_a, "sell", self.contracts),
-            self._build_leg(snap_b, "buy", self._hedge_contracts(snap_a, snap_b)),
-        ]
-
-    def _open_long_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
-        self.position = "long"
-        self.position_option_type = snap_a.option_type
-        return [
-            self._build_leg(snap_a, "buy", self.contracts),
-            self._build_leg(snap_b, "sell", self._hedge_contracts(snap_a, snap_b)),
-        ]
-
-    def _close_short_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
-        self.position = "flat"
-        self.position_option_type = None
-        return [
-            self._build_leg(snap_a, "buy", self.contracts),
-            self._build_leg(snap_b, "sell", self._hedge_contracts(snap_a, snap_b)),
-        ]
-
-    def _close_long_spread(self, snap_a: OptionSnapshot, snap_b: OptionSnapshot) -> List[Signal]:
-        self.position = "flat"
-        self.position_option_type = None
-        return [
-            self._build_leg(snap_a, "sell", self.contracts),
-            self._build_leg(snap_b, "buy", self._hedge_contracts(snap_a, snap_b)),
-        ]
 
     def _build_leg(self, snap: OptionSnapshot, action: str, qty: int) -> Signal:
         return {
