@@ -79,11 +79,11 @@ class UniverseManager:
         data_handler,
         universe: List[str],
         lookback_days: int = 180,
-        p_value_threshold: float = 0.01, # Stricter default (was 0.05)
+        p_value_threshold: float = 0.05, # Relaxed from 0.01 to 0.05 (Standard 95% confidence)
         z_score_threshold: float = 1.5, 
         min_history_days: int = 100,
-        correlation_threshold: float = 0.9,
-        min_zero_crossings: int = 15, # Minimum mean reversions
+        correlation_threshold: float = 0.8, # Relaxed from 0.9 to 0.8
+        min_zero_crossings: int = 8, # Relaxed from 15 to 8 (Once every ~3 weeks)
         max_pairs: int = 30 # Limit result size
     ):
         self.dh = data_handler
