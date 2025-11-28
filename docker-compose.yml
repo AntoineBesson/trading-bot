@@ -8,3 +8,4 @@ services:
       - .env         # Loads your keys securely
     volumes:
       - ./logs:/app/logs # Saves logs to the server disk so they persist
+      - ./data:/app/data # Saves data (cache, CSVs) to the server disk so they persist

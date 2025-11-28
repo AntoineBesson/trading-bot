@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Tuple
 
 import logging
 import pandas as pd
+import json
+import os
 
 from strategies.base_strategy import BaseStrategy
 from options.data_handler import OptionDataHandler, OptionSnapshot
@@ -36,7 +38,7 @@ class OptionPairsStrategy(BaseStrategy):
     exit_threshold: float = 0.0
     contracts: int = 1
     risk_per_trade: float = 0.01 # Risk 1% of account per trade
-    timeframe: str = "1D"
+    timeframe: str = "1H"
     stat_refresh_days: int = 5
     auto_execute: bool = False
     benchmark_symbol: Optional[str] = None
@@ -420,6 +422,21 @@ class OptionPairsStrategy(BaseStrategy):
             self._init_reference_distribution()
 
     def _init_reference_distribution(self) -> None:
+        # --- CACHING LOGIC ---
+        cache_file = f"data/stats_{self.strategy_id}.json"
+        
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+                    self.spread_mean = data['mean']
+                    self.spread_std = data['std']
+                    self._last_stat_refresh = datetime.fromisoformat(data['timestamp'])
+                    logger.info(f"[{self.strategy_id}] Loaded stats from cache (Mean: {self.spread_mean:.4f}, Std: {self.spread_std:.4f})")
+                    return
+            except Exception as e:
+                logger.warning(f"[{self.strategy_id}] Failed to load stats cache: {e}")
+
         start = self._iso_days_ago(self.lookback_days)
         end = self._iso_days_ago(0)
         option_prices = self._build_option_series(start, end, self.timeframe)
@@ -429,6 +446,18 @@ class OptionPairsStrategy(BaseStrategy):
         self.spread_mean = float(spread.mean())
         self.spread_std = float(spread.std(ddof=0)) or 1.0
         self._last_stat_refresh = datetime.now(UTC)
+        
+        # --- SAVE CACHE ---
+        try:
+            with open(cache_file, 'w') as f:
+                json.dump({
+                    'mean': self.spread_mean,
+                    'std': self.spread_std,
+                    'timestamp': self._last_stat_refresh.isoformat()
+                }, f)
+            logger.info(f"[{self.strategy_id}] Saved stats to cache: {cache_file}")
+        except Exception as e:
+            logger.error(f"[{self.strategy_id}] Failed to save stats cache: {e}")
 
     def _build_option_series(self, start: str, end: str, timeframe: str) -> pd.DataFrame:
         prices = self._fetch_close_frame(start, end, timeframe)

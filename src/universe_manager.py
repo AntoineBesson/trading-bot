@@ -1,3 +1,4 @@
+import os
 import logging
 import itertools
 import pandas as pd
@@ -111,6 +112,22 @@ class UniverseManager:
         Scans the universe for cointegrated pairs.
         Returns a list of dictionaries containing pair details.
         """
+        # --- CACHING LOGIC ---
+        cache_file = "data/active_universe.csv"
+        
+        # Check if cache exists and is fresh (e.g., < 24 hours old)
+        if os.path.exists(cache_file):
+            file_mod_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+            if datetime.now() - file_mod_time < timedelta(hours=24):
+                logger.info(f"Loading cached universe from {cache_file} (Age: {datetime.now() - file_mod_time})")
+                try:
+                    df = pd.read_csv(cache_file)
+                    self.watchlist = df.to_dict('records')
+                    self.last_scan_time = file_mod_time
+                    return self.watchlist
+                except Exception as e:
+                    logger.warning(f"Failed to load cache: {e}. Running full scan.")
+        
         logger.info(f"Starting universe scan for {len(self.universe)} symbols...")
         
         # 1. Fetch Data
@@ -232,11 +249,14 @@ class UniverseManager:
 
         self.watchlist = new_watchlist
         self.last_scan_time = datetime.now()
-        logger.info(f"Scan complete. Found {len(self.watchlist)} valid pairs.")
-        return self.watchlist
-
-        self.watchlist = new_watchlist
-        self.last_scan_time = datetime.now()
+        
+        # --- SAVE CACHE ---
+        try:
+            pd.DataFrame(self.watchlist).to_csv(cache_file, index=False)
+            logger.info(f"Saved {len(self.watchlist)} pairs to cache: {cache_file}")
+        except Exception as e:
+            logger.error(f"Failed to save cache: {e}")
+            
         logger.info(f"Scan complete. Found {len(self.watchlist)} valid pairs.")
         return self.watchlist
 
