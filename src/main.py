@@ -16,12 +16,13 @@ from data_handler import DataHandler
 from execution import ExecutionHandler
 from strategies.pairs_trade import PairsTradeStrategy
 from strategies.option_pairs import OptionPairsStrategy
+from strategies.volatility_arb import VolatilityArbitrageStrategy
 from options.data_handler import OptionDataHandler
 from options.multileg import MultiLegExecutionHelper
 from universe_manager import UniverseManager
 from portfolio_manager import PortfolioManager
 from strategy_manager import StrategyManager
-from strategies_config import create_option_pair_config
+from strategies_config import create_option_pair_config, create_volatility_arb_config
 
 # --- Configuration ---
 # How often the bot checks for signals (in seconds)
@@ -154,6 +155,8 @@ class TradingBot:
         
         # 2. Build Strategy Configs
         strategy_configs = []
+        
+        # A. Option Pairs Strategies
         for item in watchlist:
             sym_a = item['symbol_a']
             sym_b = item['symbol_b']
@@ -162,7 +165,21 @@ class TradingBot:
             config = create_option_pair_config(sym_a, sym_b, allocation=5000.0)
             
             # Inject Runtime Dependencies
-            # These objects exist in 'self' but are needed by the strategy instance
+            config['parameters']['option_data_handler'] = self.option_data_handler
+            config['parameters']['multi_leg_execution'] = self.multi_leg_helper
+            
+            strategy_configs.append(config)
+            
+        # B. Volatility Arbitrage Strategies (Example: Add for SPY and the first pair found)
+        vol_arb_symbols = ['SPY']
+        if watchlist:
+            vol_arb_symbols.append(watchlist[0]['symbol_a'])
+            
+        for sym in vol_arb_symbols:
+            # Generate config
+            config = create_volatility_arb_config(sym, allocation=10000.0)
+            
+            # Inject Runtime Dependencies
             config['parameters']['option_data_handler'] = self.option_data_handler
             config['parameters']['multi_leg_execution'] = self.multi_leg_helper
             
