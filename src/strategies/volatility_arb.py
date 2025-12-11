@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from scipy.stats import norm
 
-from strategies.base_strategy import BaseStrategy
+from src.strategies.base_strategy import BaseStrategy
 from options.data_handler import OptionDataHandler
 from options.multileg import MultiLegExecutionHelper
 
