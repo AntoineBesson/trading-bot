@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from scipy.stats import norm
 
-from src.strategies.base_strategy import BaseStrategy
-from src.options.data_handler import OptionDataHandler
-from src.options.multileg import MultiLegExecutionHelper
+from strategies.base_strategy import BaseStrategy
+from options.data_handler import OptionDataHandler
+from options.multileg import MultiLegExecutionHelper
 
 logger = logging.getLogger(__name__)
 

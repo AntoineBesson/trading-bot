@@ -1,5 +1,5 @@
-from strategies.option_pairs import OptionPairsStrategy
-from strategies.volatility_arb import VolatilityArbitrageStrategy
+from src.strategies.option_pairs import OptionPairsStrategy
+from src.strategies.volatility_arb import VolatilityArbitrageStrategy
 
 # --- Universe Definitions ---
 SECTOR_UNIVERSE = [

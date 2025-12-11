@@ -22,9 +22,11 @@ class PortfolioManager:
         self.allocations[strategy_id] = {'equity': amount, 'leverage': leverage}
         logger.info(f"PortfolioManager: Set allocation for {strategy_id} to ${amount:.2f} with {leverage}x leverage")
 
-    def check_trade(self, strategy_id: str, estimated_cost: float) -> bool:
+    def check_trade(self, strategy_id: str, estimated_cost: float, current_exposure: float = None) -> bool:
         """
         Approves or denies a trade request based on available budget.
+        :param current_exposure: (Optional) The strategy reports its own current exposure. 
+                                 If None, PM tries to calculate it (which might be inaccurate for options).
         """
         if strategy_id not in self.allocations:
             logger.warning(f"PortfolioManager: No allocation found for {strategy_id}. Denying trade.")
@@ -34,13 +36,14 @@ class PortfolioManager:
         budget = alloc_info['equity'] * alloc_info['leverage']
         
         # 1. Get current market value of positions held by this strategy
-        current_exposure = self._get_strategy_exposure(strategy_id)
+        if current_exposure is None:
+            current_exposure = self._get_strategy_exposure(strategy_id)
         
         # 2. Check if New + Current > Budget
         if current_exposure + estimated_cost > budget:
             logger.warning(
                 f"PortfolioManager: Budget Exceeded for {strategy_id}. "
-                f"Budget: ${budget} (Lev {alloc_info['leverage']}x), Current: ${current_exposure}, Requested: ${estimated_cost}"
+                f"Budget: ${budget:.2f} (Lev {alloc_info['leverage']}x), Current: ${current_exposure:.2f}, Requested: ${estimated_cost:.2f}"
             )
             return False
             

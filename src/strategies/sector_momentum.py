@@ -6,8 +6,8 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
-from src.strategies.base_strategy import BaseStrategy
-from src.strategies_config import SECTOR_UNIVERSE, DEFENSIVE_ASSETS
+from strategies.base_strategy import BaseStrategy
+from strategies_config import SECTOR_UNIVERSE, DEFENSIVE_ASSETS
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +201,15 @@ class SectorMomentumStrategy(BaseStrategy):
         # Filter for our universe
         my_positions = {p.symbol: float(p.qty) for p in current_positions if p.symbol in self.symbols}
         
+        # Calculate Current Exposure for PM Check
+        current_exposure = 0.0
+        for sym, qty in my_positions.items():
+            # Get price
+            bars = self.data_handler.get_latest_bars([sym], 1)
+            if bars and sym in bars:
+                price = float(bars[sym][0]['close'])
+                current_exposure += qty * price
+        
         # 1. Sell Logic
         # Sell anything not in target or sell excess
         for sym, qty in my_positions.items():
@@ -208,6 +217,10 @@ class SectorMomentumStrategy(BaseStrategy):
                 # Sell 100%
                 logger.info(f"[{self.strategy_id}] Selling {sym} (Not in target).")
                 self.execution_handler.close_position(sym)
+                # Update exposure (approx)
+                # We don't know exact fill price yet, but let's assume it reduces exposure
+                # Actually, we should just pass the pre-trade exposure to check_trade 
+                # and let it decide if we can ADD. Selling is always allowed.
             else:
                 # Check if we need to trim?
                 # For simplicity in this "monthly" rebalance, we can just calculate the delta.
@@ -237,13 +250,18 @@ class SectorMomentumStrategy(BaseStrategy):
             
             if qty_to_trade > 0:
                 # Buy
-                if self.portfolio_manager.check_trade(self.strategy_id, qty_to_trade * price):
+                # Pass current_exposure to PM. 
+                # Note: If we just sold something, our exposure is lower, but we haven't updated 'current_exposure' variable.
+                # Ideally we update it.
+                if self.portfolio_manager.check_trade(self.strategy_id, qty_to_trade * price, current_exposure=current_exposure):
                     logger.info(f"[{self.strategy_id}] Buying {qty_to_trade} {sym} (Target ${target_val:.2f})")
                     self.execution_handler.submit_order(sym, 'buy', qty_to_trade)
+                    current_exposure += qty_to_trade * price # Update for next loop
             elif qty_to_trade < 0:
                 # Sell
                 logger.info(f"[{self.strategy_id}] Selling {abs(qty_to_trade)} {sym} (Target ${target_val:.2f})")
                 self.execution_handler.submit_order(sym, 'sell', abs(qty_to_trade))
+                current_exposure -= abs(qty_to_trade) * price
 
     def run_backtest(self, start_date, end_date, timeframe="1D"):
         """
