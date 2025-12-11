@@ -51,7 +51,9 @@ class StrategyManager:
                     )
                     
                     # 3. Reconcile State (The "Sherlock Holmes" Logic)
-                    strategy.reconcile()
+                    # We pass an empty map initially. The main loop calls reconcile_positions() 
+                    # shortly after, which will do the full check with actual broker data.
+                    strategy.reconcile({})
                     
                     self.strategies[strat_id] = strategy
                     
