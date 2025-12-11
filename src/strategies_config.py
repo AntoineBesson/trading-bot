@@ -1,6 +1,23 @@
 from strategies.option_pairs import OptionPairsStrategy
 from strategies.volatility_arb import VolatilityArbitrageStrategy
 
+# --- Universe Definitions ---
+SECTOR_UNIVERSE = [
+    'XLK', # Technology
+    'XLF', # Financials
+    'XLE', # Energy
+    'XLV', # Healthcare
+    'XLI', # Industrials
+    'XLP', # Staples
+    'XLY', # Discretionary
+    'XLB', # Materials
+    'XLU', # Utilities
+    'XLC', # Communications
+    'XLRE' # Real Estate
+]
+
+DEFENSIVE_ASSETS = ['SHV', 'BIL'] # Short-Term Treasuries
+
 def create_option_pair_config(symbol_a, symbol_b, allocation=5000.0):
     """
     Generates a configuration dictionary for an Option Pair strategy.
@@ -61,8 +78,30 @@ def create_volatility_arb_config(symbol, allocation=10000.0):
             'symbol': symbol,
             'lookback_days': 30,
             'entry_threshold': 1.25,
-            'delta_threshold': 10.0,
+            'delta_threshold': 25.0,
             'profit_target': 0.50,
-            'stop_loss_iv_mult': 1.5
+            'stop_loss_iv_mult': 1.3,
+            'contracts': 1,
+            'initial_capital': allocation
+        }
+    }
+
+def create_sector_momentum_config(allocation=30000.0):
+    """
+    Generates a configuration dictionary for the Sector Momentum strategy.
+    """
+    from strategies.sector_momentum import SectorMomentumStrategy
+    
+    strategy_id = "SectorMomentum_Monthly"
+    
+    return {
+        'id': strategy_id,
+        'strategy_class': SectorMomentumStrategy,
+        'allocation': allocation,
+        'parameters': {
+            'universe': SECTOR_UNIVERSE,
+            'safety_asset': 'SHV',
+            'top_n': 3,
+            'initial_capital': allocation
         }
     }

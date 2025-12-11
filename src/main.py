@@ -22,7 +22,7 @@ from options.multileg import MultiLegExecutionHelper
 from universe_manager import UniverseManager
 from portfolio_manager import PortfolioManager
 from strategy_manager import StrategyManager
-from strategies_config import create_option_pair_config, create_volatility_arb_config
+from strategies_config import create_option_pair_config, create_volatility_arb_config, create_sector_momentum_config
 
 # --- Configuration ---
 # How often the bot checks for signals (in seconds)
@@ -185,6 +185,11 @@ class TradingBot:
             
             strategy_configs.append(config)
             
+        # C. Sector Momentum Strategy (Monthly)
+        # We add this as a core strategy
+        sector_config = create_sector_momentum_config(allocation=30000.0)
+        strategy_configs.append(sector_config)
+
         # 3. Update Strategy Manager
         self.sm.update_strategies(strategy_configs)
 

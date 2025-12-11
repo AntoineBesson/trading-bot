@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, List, Any
 from strategies.option_pairs import OptionPairsStrategy
+from src.regime_detector import RegimeDetector
 # from strategies.pairs_trade import PairsTradeStrategy # Uncomment if needed
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ class StrategyManager:
         self.eh = execution_handler
         self.pm = portfolio_manager
         self.strategies: Dict[str, Any] = {} # Map ID -> Strategy Instance
+        self.regime_detector = RegimeDetector(self.dh)
 
     def update_strategies(self, strategy_configs: List[Dict]):
         """
@@ -114,8 +116,24 @@ class StrategyManager:
         """
         The main heartbeat. Asks every strategy to play its part.
         """
+        # 1. Get Current Regime
+        current_regime = self.regime_detector.get_current_regime()
+        
         for strat_id, strategy in self.strategies.items():
             try:
+                strat_type = type(strategy).__name__
+                
+                # Check regime constraints
+                # State 1 = Volatile (Bad for Pairs Trade)
+                if current_regime == 1 and "PairsTrade" in strat_type:
+                    logger.info(f"StrategyManager: Skipping {strat_id} ({strat_type}) due to High Volatility Regime")
+                    continue
+                
+                # State 0 = Calm (Bad for Volatility Arbitrage / Gamma Scalping)
+                if current_regime == 0 and "VolatilityArbitrage" in strat_type:
+                    logger.info(f"StrategyManager: Skipping {strat_id} ({strat_type}) due to Calm Regime")
+                    continue
+
                 logger.debug(f"StrategyManager: Ticking {strat_id}")
                 signals = strategy.generate_signal()
                 

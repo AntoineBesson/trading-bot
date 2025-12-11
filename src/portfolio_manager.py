@@ -13,10 +13,14 @@ class PortfolioManager:
         # e.g. {"Energy_Spread_EQT_EXE": 5000.0}
         self.allocations: Dict[str, float] = {}
 
-    def set_allocation(self, strategy_id: str, amount: float):
-        """Sets the maximum capital budget for a specific strategy."""
-        self.allocations[strategy_id] = amount
-        logger.info(f"PortfolioManager: Set allocation for {strategy_id} to ${amount:.2f}")
+    def set_allocation(self, strategy_id: str, amount: float, leverage: float = 1.0):
+        """
+        Sets the maximum capital budget for a specific strategy.
+        :param amount: The base equity allocated.
+        :param leverage: The leverage multiplier (e.g., 1.5 for 150%).
+        """
+        self.allocations[strategy_id] = {'equity': amount, 'leverage': leverage}
+        logger.info(f"PortfolioManager: Set allocation for {strategy_id} to ${amount:.2f} with {leverage}x leverage")
 
     def check_trade(self, strategy_id: str, estimated_cost: float) -> bool:
         """
@@ -26,7 +30,8 @@ class PortfolioManager:
             logger.warning(f"PortfolioManager: No allocation found for {strategy_id}. Denying trade.")
             return False
 
-        budget = self.allocations[strategy_id]
+        alloc_info = self.allocations[strategy_id]
+        budget = alloc_info['equity'] * alloc_info['leverage']
         
         # 1. Get current market value of positions held by this strategy
         current_exposure = self._get_strategy_exposure(strategy_id)
@@ -35,7 +40,7 @@ class PortfolioManager:
         if current_exposure + estimated_cost > budget:
             logger.warning(
                 f"PortfolioManager: Budget Exceeded for {strategy_id}. "
-                f"Budget: ${budget}, Current: ${current_exposure}, Requested: ${estimated_cost}"
+                f"Budget: ${budget} (Lev {alloc_info['leverage']}x), Current: ${current_exposure}, Requested: ${estimated_cost}"
             )
             return False
             
@@ -85,7 +90,8 @@ class PortfolioManager:
         if strategy_id not in self.allocations:
             return 0.0
             
-        budget = self.allocations[strategy_id]
+        alloc_info = self.allocations[strategy_id]
+        budget = alloc_info['equity'] * alloc_info['leverage']
         current_exposure = self._get_strategy_exposure(strategy_id)
         
         return max(0.0, budget - current_exposure)
