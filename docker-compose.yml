@@ -2,11 +2,11 @@ version: '3.8'
 services:
   trading-bot:
     build: .
-    container_name: quant-bot
+    container_name: quant-bo
     restart: always  # <--- CRITICAL: Auto-restarts if it crashes or server reboots
     command: uvicorn src.api:app --host 0.0.0.0 --port 8000
     ports:
-      - "8000:8000"
+      - "8080:8000" # Mapped to 8080 to avoid conflicts
     env_file:
       - .env         # Loads your keys securely
     volumes:
