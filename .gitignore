@@ -21,3 +21,6 @@ config.ini
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# Models
+*.pkl
