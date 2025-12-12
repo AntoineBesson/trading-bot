@@ -121,6 +121,10 @@ class StrategyManager:
         
         for strat_id, strategy in self.strategies.items():
             try:
+                # Check if strategy is manually disabled
+                if hasattr(strategy, 'active') and not strategy.active:
+                    continue
+
                 strat_type = type(strategy).__name__
                 
                 # Check regime constraints

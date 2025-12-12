@@ -28,6 +28,7 @@ class BaseStrategy(ABC):
         self.strategy_id = strategy_id
         self.symbols = symbols
         self.name = strategy_id
+        self.active = True
         
         logger.info(f"Strategy {self.strategy_id} initialized with symbols: {self.symbols}")
 
