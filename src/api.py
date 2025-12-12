@@ -8,22 +8,37 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Global Engine Instance
-engine = TradingEngine()
+engine = None
+startup_error = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global engine, startup_error
     # Startup
-    logger.info("Starting Trading Engine...")
-    engine.start()
+    try:
+        logger.info("Initializing Trading Engine...")
+        engine = TradingEngine()
+        logger.info("Starting Trading Engine...")
+        engine.start()
+    except Exception as e:
+        logger.error(f"Failed to start engine: {e}")
+        startup_error = str(e)
+    
     yield
     # Shutdown
-    logger.info("Stopping Trading Engine...")
-    engine.stop()
+    if engine:
+        logger.info("Stopping Trading Engine...")
+        engine.stop()
 
 app = FastAPI(lifespan=lifespan)
 
 @app.get("/status")
 def get_status():
+    if startup_error:
+        return {"status": "error", "message": startup_error}
+    if not engine:
+        return {"status": "initializing"}
+        
     status = engine.get_status()
     # Add regime info
     try:
@@ -36,11 +51,16 @@ def get_status():
 
 @app.get("/strategies")
 def get_strategies():
+    if not engine:
+        raise HTTPException(status_code=503, detail="Engine not ready")
     status = engine.get_status()
     return status["strategies"]
 
 @app.post("/strategies/{strategy_id}/toggle")
 def toggle_strategy(strategy_id: str):
+    if not engine:
+        raise HTTPException(status_code=503, detail="Engine not ready")
+        
     strategies = engine.sm.strategies
     if strategy_id not in strategies:
         raise HTTPException(status_code=404, detail="Strategy not found")
