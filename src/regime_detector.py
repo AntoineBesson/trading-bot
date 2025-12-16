@@ -14,6 +14,11 @@ class RegimeDetector:
         self.dh = data_handler
         self.symbol = symbol
         self.lookback_years = lookback_years
+        
+        # Handle relative path to ensure it points to src/data
+        if not os.path.isabs(model_path):
+             model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), model_path)
+             
         self.model_path = Path(model_path)
         self.model = None
         

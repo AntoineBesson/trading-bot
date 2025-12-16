@@ -56,8 +56,9 @@ class TradingEngine:
         
         # 5. Initialize Universe Manager
         try:
-            self.universe = pd.read_csv("data/universe.csv")['symbol'].tolist()
-            logger.info(f"Loaded {len(self.universe)} symbols from data/universe.csv")
+            universe_path = os.path.join(os.path.dirname(__file__), "data", "universe.csv")
+            self.universe = pd.read_csv(universe_path)['symbol'].tolist()
+            logger.info(f"Loaded {len(self.universe)} symbols from {universe_path}")
         except Exception as e:
             logger.warning(f"Could not load universe.csv ({e}). Using default S&P Financials list.")
             # Default universe (S&P 500 Financials subset or similar)

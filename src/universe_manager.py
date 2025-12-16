@@ -113,7 +113,8 @@ class UniverseManager:
         Returns a list of dictionaries containing pair details.
         """
         # --- CACHING LOGIC ---
-        cache_file = "data/active_universe.csv"
+        # Use absolute path for cache file
+        cache_file = os.path.join(os.path.dirname(__file__), "data", "active_universe.csv")
         
         # Check if cache exists and is fresh (e.g., < 24 hours old)
         if os.path.exists(cache_file):

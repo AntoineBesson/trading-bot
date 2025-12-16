@@ -423,7 +423,8 @@ class OptionPairsStrategy(BaseStrategy):
 
     def _init_reference_distribution(self) -> None:
         # --- CACHING LOGIC ---
-        cache_file = f"data/stats_{self.strategy_id}.json"
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        cache_file = os.path.join(base_dir, "data", f"stats_{self.strategy_id}.json")
         
         if os.path.exists(cache_file):
             try:
