@@ -57,6 +57,7 @@ class BaseStrategy(ABC):
             self.position = "invested"
             logger.info(f"[{self.strategy_id}] Found {len(strategy_positions)} positions. State set to INVESTED.")
 
+    
     def kill_switch(self):
         """
         Emergency exit. Closes all positions associated with this strategy.

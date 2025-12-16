@@ -83,3 +83,19 @@ def toggle_strategy(strategy_id: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)
+
+@app.post("/strategies/{strategy_id}/stop")
+def stop_strategy(strategy_id: str):
+    """Pauses a specific strategy."""
+    success = engine.sm.stop_strategy(strategy_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    return {"status": "stopped", "id": strategy_id}
+
+@app.post("/strategies/{strategy_id}/start")
+def start_strategy(strategy_id: str):
+    """Resumes a specific strategy."""
+    success = engine.sm.start_strategy(strategy_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    return {"status": "started", "id": strategy_id}

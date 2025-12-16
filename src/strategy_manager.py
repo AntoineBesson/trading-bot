@@ -155,6 +155,34 @@ class StrategyManager:
             except Exception as e:
                 logger.error(f"StrategyManager: Error in {strat_id}: {e}")
 
+    def stop_strategy(self, strategy_id):
+        """Finds a strategy by ID and pauses it."""
+        # Check dictionary strategies
+        if isinstance(self.strategies, dict):
+            if strategy_id in self.strategies:
+                self.strategies[strategy_id].active = False
+                return True
+        # Check list strategies (if you use a list)
+        elif isinstance(self.strategies, list):
+            for s in self.strategies:
+                if getattr(s, 'id', '') == strategy_id:
+                    s.active = False
+                    return True
+        return False
+
+    def start_strategy(self, strategy_id):
+        """Finds a strategy by ID and resumes it."""
+        if isinstance(self.strategies, dict):
+            if strategy_id in self.strategies:
+                self.strategies[strategy_id].active = True
+                return True
+        elif isinstance(self.strategies, list):
+            for s in self.strategies:
+                if getattr(s, 'id', '') == strategy_id:
+                    s.active = True
+                    return True
+        return False
+    
     def kill_all(self):
         """
         The Red Button.
