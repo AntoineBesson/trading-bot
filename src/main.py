@@ -128,6 +128,7 @@ class TradingBot:
     'AIG', 'AFL', 'AES', 'AEP', 'AEE', 'ADSK', 'ADP', 'ADM', 'ADI', 'ADBE', 
     'ACN', 'ACGL', 'ABT', 'ABNB', 'ABBV', 'AAPL', 'A'
 ]
+            print(self.universe)
         self.universe_manager = UniverseManager(
             data_handler=self.dh,
             universe=self.universe,
