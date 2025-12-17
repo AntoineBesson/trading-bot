@@ -10,18 +10,35 @@ class PortfolioManager:
     def __init__(self, data_handler):
         self.dh = data_handler
         # Dictionary to track allocation per strategy ID
-        # e.g. {"Energy_Spread_EQT_EXE": 5000.0}
+        try:
+            # We access the API through the DataHandler
+            account = self.dh.api.get_account()
+            self.current_capital = float(account.equity)
+            logger.info(f"PortfolioManager initialized. Net Equity: ${self.current_capital}")
+        except Exception as e:
+            logger.warning(f"Could not fetch initial equity from Alpaca: {e}. Defaulting to $100k.")
+            self.current_capital = 100000.0 # Fallback if API fails
         self.allocations: Dict[str, float] = {}
 
     def get_total_equity(self):
-        """Returns Cash + Value of all Open Positions."""
-        # This is an estimate. Real brokers provide this via API.
-        # For now, we return the internal tracking value.
-        total_value = self.current_capital
-        
-        # Add value of active strategies/positions if you track them
-        # (For this tutorial, returning current_capital is fine as it updates on close)
-        return total_value
+        """
+        Returns the LIVE total value of the portfolio (Cash + Positions).
+        Used by the Engine to draw the graph.
+        """
+        try:
+            # 1. Fetch live equity from Alpaca
+            account = self.dh.api.get_account()
+            live_equity = float(account.equity)
+            
+            # 2. Update our internal tracker
+            self.current_capital = live_equity
+            
+            return live_equity
+            
+        except Exception as e:
+            logger.error(f"Error fetching live equity: {e}")
+            # If API fails, return the last known good value so the graph doesn't crash
+            return self.current_capital
 
     def set_allocation(self, strategy_id: str, amount: float, leverage: float = 1.0):
         """

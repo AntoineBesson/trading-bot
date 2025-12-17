@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import EquityChart from './components/EquityChart';
 import { Activity, Server, ShieldCheck, Play, Pause, Loader, AlertTriangle, Hash, Layers } from 'lucide-react';
 
 // --- 1. INTERNAL API CONFIGURATION ---
@@ -67,6 +68,7 @@ const StrategyCard = ({ strategy }) => {
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [history, setHistory] = useState([]);
 
   useEffect(() => {
     const fetchData = () => {
@@ -74,6 +76,7 @@ function App() {
         .then(res => {
           setData(res.data);
           setError(null);
+          api.get('/history').then(res => setHistory(res.data));
         })
         .catch(err => {
           // Only show error if we have never loaded data before
@@ -143,6 +146,13 @@ function App() {
           <div className="text-center py-20 bg-gray-800/50 rounded-xl border border-dashed border-gray-700 text-gray-500">Waiting for data...</div>
         )}
       </div>
+      
+      {/* CHART SECTION */}
+      {history.length > 0 ? (
+        <EquityChart data={history} />
+      ) : (
+        <div className="text-gray-500 mt-8">Not enough data for chart yet...</div>
+      )}
     </div>
   );
 }
