@@ -77,15 +77,17 @@ class PermutationTester:
         
         return permuted_df
 
-    def run_test(self, strategy_class, lookback_param, n_permutations=100):
+    def run_test(self, backtest_func, n_permutations=100, **kwargs):
         """
         Runs the strategy on Real Data vs N Permutations.
         Returns a 'p-value' (Score). 
         Lower p-value (< 0.05) = Strategy is REAL.
         High p-value (> 0.05) = Strategy is FAKE/LUCK.
+        
+        :param backtest_func: Function(df, **kwargs) -> float (performance metric)
         """
         # 1. Run on Real Data
-        real_profit = self._run_backtest(self.original_data, strategy_class, lookback_param)
+        real_profit = backtest_func(self.original_data, **kwargs)
         logger.info(f"Real Data Profit Factor: {real_profit:.2f}")
         
         better_than_real_count = 0
@@ -93,7 +95,7 @@ class PermutationTester:
         # 2. Run on Permuted (Fake) Data
         for i in range(n_permutations):
             fake_data = self.generate_permutation()
-            fake_profit = self._run_backtest(fake_data, strategy_class, lookback_param)
+            fake_profit = backtest_func(fake_data, **kwargs)
             
             if fake_profit >= real_profit:
                 better_than_real_count += 1
@@ -105,7 +107,8 @@ class PermutationTester:
         p_value = better_than_real_count / n_permutations
         return p_value
 
-    def _run_backtest(self, df, strategy_class, lookback):
+    @staticmethod
+    def donchian_backtest(df, lookback=20):
         """
         Simplified vector backtest for speed (as shown in video).
         """
@@ -131,5 +134,5 @@ class PermutationTester:
         gains = strategy_returns[strategy_returns > 0].sum()
         losses = abs(strategy_returns[strategy_returns < 0].sum())
         
-        if losses == 0: return 0
+        if losses == 0: return 0 if gains == 0 else 999
         return gains / losses
