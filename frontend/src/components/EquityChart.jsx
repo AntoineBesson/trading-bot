@@ -22,11 +22,24 @@ const EquityChart = ({ data }) => {
     });
 
     // 2. Add Line Series (Equity)
-    const newSeries = chart.addAreaSeries({
-      lineColor: '#22c55e', // Green
-      topColor: '#22c55e',
-      bottomColor: 'rgba(34, 197, 94, 0.1)', // Transparent Green
-    });
+    let newSeries;
+    try {
+        if (typeof chart.addAreaSeries === 'function') {
+            newSeries = chart.addAreaSeries({
+                lineColor: '#22c55e', // Green
+                topColor: '#22c55e',
+                bottomColor: 'rgba(34, 197, 94, 0.1)', // Transparent Green
+            });
+        } else {
+            console.warn("addAreaSeries not found, falling back to addLineSeries");
+            newSeries = chart.addLineSeries({
+                color: '#22c55e',
+            });
+        }
+    } catch (err) {
+        console.error("Error creating series:", err);
+        return;
+    }
 
     // 3. Format Data (TradingView expects { time, value })
     // We convert UNIX timestamp to seconds if needed
