@@ -99,3 +99,8 @@ def start_strategy(strategy_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return {"status": "started", "id": strategy_id}
+
+@app.get("/history")
+def get_history():
+    """Returns the equity curve data for the chart."""
+    return engine.equity_history

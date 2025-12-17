@@ -31,7 +31,7 @@ class TradingEngine:
         """Initializes the bot components."""
         self._stop_event = threading.Event()
         self.thread = None
-        
+        self.equity_history = []
         # 1. Load Environment
         load_dotenv()
         
@@ -56,9 +56,8 @@ class TradingEngine:
         
         # 5. Initialize Universe Manager
         try:
-            universe_path = os.path.join(os.path.dirname(__file__), "data", "universe.csv")
-            self.universe = pd.read_csv(universe_path)['symbol'].tolist()
-            logger.info(f"Loaded {len(self.universe)} symbols from {universe_path}")
+            self.universe = pd.read_csv("data/universe.csv")['symbol'].tolist()
+            logger.info(f"Loaded {len(self.universe)} symbols from data/universe.csv")
         except Exception as e:
             logger.warning(f"Could not load universe.csv ({e}). Using default S&P Financials list.")
             # Default universe (S&P 500 Financials subset or similar)
@@ -79,6 +78,30 @@ class TradingEngine:
 
         # 7. Reconcile State
         self.sm.reconcile_positions()
+
+    def record_history(self):
+        """Saves the current portfolio value and a benchmark price."""
+        try:
+            # 1. Get Current Timestamp
+            now = datetime.now().timestamp()
+            
+            # 2. Get Portfolio Value (Cash + Holdings)
+            # Ensure your PortfolioManager has a get_total_equity() method or similar
+            # If not, use self.pm.current_cash + value_of_positions
+            total_equity = self.pm.get_total_equity() 
+            
+            # 3. Append to History
+            self.equity_history.append({
+                "time": now,
+                "value": total_equity
+            })
+            
+            # Keep only last 1000 points to save memory
+            if len(self.equity_history) > 1000:
+                self.equity_history.pop(0)
+                
+        except Exception as e:
+            logger.error(f"Error recording history: {e}")
 
     def rebalance_strategies(self):
         """Scans the universe and rebuilds the strategy list."""
@@ -155,7 +178,8 @@ class TradingEngine:
                     logger.info("Scheduled universe scan triggered.")
                     self.rebalance_strategies()
                     last_scan = time.time()
-
+                self.record_history()
+                
                 # --- 2. Run Strategies ---
                 self.sm.run_tick()
 

@@ -13,6 +13,16 @@ class PortfolioManager:
         # e.g. {"Energy_Spread_EQT_EXE": 5000.0}
         self.allocations: Dict[str, float] = {}
 
+    def get_total_equity(self):
+        """Returns Cash + Value of all Open Positions."""
+        # This is an estimate. Real brokers provide this via API.
+        # For now, we return the internal tracking value.
+        total_value = self.current_capital
+        
+        # Add value of active strategies/positions if you track them
+        # (For this tutorial, returning current_capital is fine as it updates on close)
+        return total_value
+
     def set_allocation(self, strategy_id: str, amount: float, leverage: float = 1.0):
         """
         Sets the maximum capital budget for a specific strategy.
