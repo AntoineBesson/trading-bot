@@ -3,14 +3,16 @@ import { createChart, ColorType } from 'lightweight-charts';
 
 const EquityChart = ({ data }) => {
   const chartContainerRef = useRef();
+  const chartRef = useRef(null);
+  const seriesRef = useRef(null);
 
+  // 1. Initialize Chart (Run once)
   useEffect(() => {
-    if (!data || data.length === 0) return;
+    if (!chartContainerRef.current) return;
 
-    // 1. Create Chart
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#1f2937' }, // Dark Gray (Tailwind bg-gray-800)
+        background: { type: ColorType.Solid, color: '#1f2937' },
         textColor: '#d1d5db',
       },
       grid: {
@@ -19,61 +21,77 @@ const EquityChart = ({ data }) => {
       },
       width: chartContainerRef.current.clientWidth,
       height: 300,
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+      },
     });
 
-    // 2. Add Line Series (Equity)
+    // Create Series
     let newSeries;
     try {
         if (typeof chart.addAreaSeries === 'function') {
             newSeries = chart.addAreaSeries({
-                lineColor: '#22c55e', // Green
+                lineColor: '#22c55e',
                 topColor: '#22c55e',
-                bottomColor: 'rgba(34, 197, 94, 0.1)', // Transparent Green
+                bottomColor: 'rgba(34, 197, 94, 0.1)',
             });
         } else {
-            console.warn("addAreaSeries not found, falling back to addLineSeries");
-            newSeries = chart.addLineSeries({
-                color: '#22c55e',
-            });
+            newSeries = chart.addLineSeries({ color: '#22c55e' });
         }
     } catch (err) {
         console.error("Error creating series:", err);
-        return;
     }
 
-    // 3. Format Data (TradingView expects { time, value })
-    // We convert UNIX timestamp to seconds if needed
-    const formattedData = data
-      .filter(d => d && typeof d.time === 'number' && typeof d.value === 'number')
-      .map(d => ({
-        time: Math.floor(d.time), // Unix Timestamp
-        value: d.value
-    }));
-    
-    // Sort by time just in case
-    formattedData.sort((a, b) => a.time - b.time);
+    chartRef.current = chart;
+    seriesRef.current = newSeries;
 
-    if (formattedData.length > 0) {
-        newSeries.setData(formattedData);
-        chart.timeScale().fitContent();
-    }
-
-    // Resize handler
     const handleResize = () => {
-      chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      if (chartContainerRef.current) {
+        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
+      }
     };
     window.addEventListener('resize', handleResize);
 
     return () => {
-      chart.remove();
       window.removeEventListener('resize', handleResize);
+      chart.remove();
     };
+  }, []); // Empty dependency array = run once
+
+  // 2. Update Data (Run when data changes)
+  useEffect(() => {
+    if (!data || data.length === 0 || !seriesRef.current) return;
+
+    const formattedData = data
+      .filter(d => d && typeof d.time === 'number' && typeof d.value === 'number')
+      .map(d => ({
+        time: Math.floor(d.time),
+        value: d.value
+    }));
+    
+    // Sort and deduplicate
+    formattedData.sort((a, b) => a.time - b.time);
+    const uniqueData = [];
+    if (formattedData.length > 0) {
+        uniqueData.push(formattedData[0]);
+        for (let i = 1; i < formattedData.length; i++) {
+            if (formattedData[i].time > formattedData[i-1].time) {
+                uniqueData.push(formattedData[i]);
+            }
+        }
+    }
+
+    if (uniqueData.length > 0) {
+        seriesRef.current.setData(uniqueData);
+        chartRef.current.timeScale().fitContent();
+    }
   }, [data]);
 
   return (
     <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg w-full max-w-5xl mt-6">
       <h2 className="text-xl font-bold mb-4 text-gray-200">Portfolio Performance</h2>
-      <div ref={chartContainerRef} className="w-full h-[300px]" />
+      <div ref={chartContainerRef} className="w-full" style={{ height: '300px' }} />
     </div>
   );
 };
