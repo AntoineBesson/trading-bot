@@ -11,6 +11,7 @@ class PortfolioManager:
     """
     def __init__(self, data_handler):
         self.dh = data_handler
+        self.allocations = {}
         # Dictionary to track allocation per strategy ID
         try:
             api_key = os.getenv('APCA_API_KEY_ID')
@@ -36,7 +37,7 @@ class PortfolioManager:
         try:
             if self.trading_client:
                 account = self.trading_client.get_account()
-                live_equitgiy = float(account.equity)
+                live_equity = float(account.equity)
                 self.current_capital = live_equity
                 return live_equity
         except Exception as e:
