@@ -1,4 +1,7 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 import logging
 import os
@@ -33,6 +36,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# --- CORS Middleware ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins for now (dev mode)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- API Endpoints ---
+@app.get("/api/status") # Support both /status and /api/status for flexibility
 @app.get("/status")
 def get_status():
     if startup_error:
@@ -50,6 +64,7 @@ def get_status():
         status["regime"] = "Unknown"
     return status
 
+@app.get("/api/strategies")
 @app.get("/strategies")
 def get_strategies():
     if not engine:
@@ -57,6 +72,7 @@ def get_strategies():
     status = engine.get_status()
     return status["strategies"]
 
+@app.post("/api/strategies/{strategy_id}/toggle")
 @app.post("/strategies/{strategy_id}/toggle")
 def toggle_strategy(strategy_id: str):
     if not engine:
@@ -81,10 +97,7 @@ def toggle_strategy(strategy_id: str):
         "message": f"Strategy {strategy_id} is now {'active' if strategy.active else 'inactive'}"
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)
-
+@app.post("/api/strategies/{strategy_id}/stop")
 @app.post("/strategies/{strategy_id}/stop")
 def stop_strategy(strategy_id: str):
     """Pauses a specific strategy."""
@@ -93,6 +106,7 @@ def stop_strategy(strategy_id: str):
         raise HTTPException(status_code=404, detail="Strategy not found")
     return {"status": "stopped", "id": strategy_id}
 
+@app.post("/api/strategies/{strategy_id}/start")
 @app.post("/strategies/{strategy_id}/start")
 def start_strategy(strategy_id: str):
     """Resumes a specific strategy."""
@@ -101,12 +115,14 @@ def start_strategy(strategy_id: str):
         raise HTTPException(status_code=404, detail="Strategy not found")
     return {"status": "started", "id": strategy_id}
 
+@app.get("/api/history")
 @app.get("/history")
 def get_history():
     if not engine:
         return []
     return engine.equity_history
 
+@app.get("/api/logs")
 @app.get("/logs")
 def get_logs():
     try:
@@ -120,6 +136,19 @@ def get_logs():
             return {"logs": "".join(lines[-100:])}
     except Exception as e:
         return {"logs": f"Error reading logs: {str(e)}"}
+
+# --- Serve Frontend (Must be last) ---
+# Mount the 'dist' folder (built frontend) to root
+# We check if the folder exists to avoid crashing in dev mode without build
+frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+if os.path.exists(frontend_path):
+    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="static")
+else:
+    logger.warning(f"Frontend build not found at {frontend_path}. API only mode.")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("src.api:app", host="127.0.0.1", port=8000, reload=True)
 
 @app.get("/history")
 def get_history():

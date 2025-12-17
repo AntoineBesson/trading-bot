@@ -138,14 +138,16 @@ function App() {
             Active Strategies <span className="bg-gray-800 text-xs py-0.5 px-2 rounded-full text-gray-400 border border-gray-700">{data?.strategies?.length || 0}</span>
         </h2>
         
-        {data?.strategies ? (
+        {data?.strategies && data.strategies.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {data.strategies.map((strat, index) => (
               <StrategyCard key={index} strategy={strat} />
             ))}
           </div>
         ) : (
-          <div className="text-center py-20 bg-gray-800/50 rounded-xl border border-dashed border-gray-700 text-gray-500">Waiting for data...</div>
+          <div className="text-center py-20 bg-gray-800/50 rounded-xl border border-dashed border-gray-700 text-gray-500">
+            {data ? "No active strategies found." : "Waiting for data..."}
+          </div>
         )}
       </div>
       
