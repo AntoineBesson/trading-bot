@@ -1,5 +1,7 @@
 import logging
+import os
 from typing import Dict, Optional
+from alpaca.trading.client import TradingClient
 
 logger = logging.getLogger(__name__)
 
@@ -11,34 +13,37 @@ class PortfolioManager:
         self.dh = data_handler
         # Dictionary to track allocation per strategy ID
         try:
-            # We access the API through the DataHandler
-            account = self.dh.api.get_account()
+            api_key = os.getenv('APCA_API_KEY_ID')
+            secret_key = os.getenv('APCA_API_SECRET_KEY')
+            
+            # Initialize TradingClient (set paper=True if using paper keys)
+            self.trading_client = TradingClient(api_key, secret_key, paper=True)
+            
+            # Fetch Initial Equity
+            account = self.trading_client.get_account()
             self.current_capital = float(account.equity)
             logger.info(f"PortfolioManager initialized. Net Equity: ${self.current_capital}")
+            
         except Exception as e:
-            logger.warning(f"Could not fetch initial equity from Alpaca: {e}. Defaulting to $100k.")
-            self.current_capital = 100000.0 # Fallback if API fails
-        self.allocations: Dict[str, float] = {}
+            logger.warning(f"PortfolioManager: Could not connect to Alpaca ({e}). Defaulting to $100k.")
+            self.current_capital = 100000.0 # Fallback
+            self.trading_client = None
 
     def get_total_equity(self):
         """
-        Returns the LIVE total value of the portfolio (Cash + Positions).
-        Used by the Engine to draw the graph.
+        Returns the LIVE total value of the portfolio.
         """
         try:
-            # 1. Fetch live equity from Alpaca
-            account = self.dh.api.get_account()
-            live_equity = float(account.equity)
-            
-            # 2. Update our internal tracker
-            self.current_capital = live_equity
-            
-            return live_equity
-            
+            if self.trading_client:
+                account = self.trading_client.get_account()
+                live_equitgiy = float(account.equity)
+                self.current_capital = live_equity
+                return live_equity
         except Exception as e:
             logger.error(f"Error fetching live equity: {e}")
-            # If API fails, return the last known good value so the graph doesn't crash
-            return self.current_capital
+        
+        # If API fails, return last known value
+        return self.current_capital
 
     def set_allocation(self, strategy_id: str, amount: float, leverage: float = 1.0):
         """
