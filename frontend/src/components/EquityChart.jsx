@@ -30,13 +30,20 @@ const EquityChart = ({ data }) => {
 
     // 3. Format Data (TradingView expects { time, value })
     // We convert UNIX timestamp to seconds if needed
-    const formattedData = data.map(d => ({
+    const formattedData = data
+      .filter(d => d && typeof d.time === 'number' && typeof d.value === 'number')
+      .map(d => ({
         time: Math.floor(d.time), // Unix Timestamp
         value: d.value
     }));
+    
+    // Sort by time just in case
+    formattedData.sort((a, b) => a.time - b.time);
 
-    newSeries.setData(formattedData);
-    chart.timeScale().fitContent();
+    if (formattedData.length > 0) {
+        newSeries.setData(formattedData);
+        chart.timeScale().fitContent();
+    }
 
     // Resize handler
     const handleResize = () => {

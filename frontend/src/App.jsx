@@ -54,7 +54,7 @@ const StrategyCard = ({ strategy }) => {
         <div className="mt-4 pt-3 border-t border-gray-700">
            <span className="text-xs text-gray-500 uppercase font-semibold flex items-center gap-1 mb-2"> <Hash size={10} /> Traded Symbols </span>
            <div className="flex flex-wrap gap-2">
-             {strategy.symbols && strategy.symbols.map((sym) => (
+             {strategy.symbols && Array.isArray(strategy.symbols) && strategy.symbols.map((sym) => (
                <span key={sym} className="text-xs bg-gray-900 text-gray-300 px-2 py-1 rounded border border-gray-700 font-mono">{sym}</span>
              ))}
            </div>
@@ -64,8 +64,42 @@ const StrategyCard = ({ strategy }) => {
   );
 };
 
-// --- 3. MAIN APP COMPONENT ---
-function App() {
+// --- 3. ERROR BOUNDARY ---
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-red-500 bg-gray-900 min-h-screen flex flex-col items-center justify-center">
+          <h1 className="text-2xl font-bold mb-4 flex items-center gap-2"><AlertTriangle /> Something went wrong.</h1>
+          <pre className="bg-black p-4 rounded border border-red-800 overflow-auto max-w-2xl w-full text-xs">
+            {this.state.error && this.state.error.toString()}
+          </pre>
+          <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-blue-600 rounded text-white hover:bg-blue-700">
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+
+    return this.props.children; 
+  }
+}
+
+// --- 4. MAIN APP COMPONENT ---
+function AppContent() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState([]);
@@ -75,10 +109,11 @@ function App() {
     const fetchData = () => {
       api.get('/status')
         .then(res => {
+          console.log("Status Data:", res.data); // DEBUG
           setData(res.data);
           setError(null);
-          api.get('/history').then(res => setHistory(res.data));
-          api.get('/logs').then(res => setLogs(res.data.logs));
+          api.get('/history').then(res => setHistory(res.data)).catch(e => console.warn("History fetch failed", e));
+          api.get('/logs').then(res => setLogs(res.data.logs)).catch(e => console.warn("Logs fetch failed", e));
         })
         .catch(err => {
           // Only show error if we have never loaded data before
@@ -154,7 +189,7 @@ function App() {
       {/* CHART SECTION */}
       <div className="w-full max-w-5xl mt-8">
         <h2 className="text-xl font-bold mb-5 text-gray-200">Portfolio Performance</h2>
-        {history.length > 0 ? (
+        {history && history.length > 0 ? (
           <EquityChart data={history} />
         ) : (
           <div className="text-gray-500 p-10 bg-gray-800 rounded-xl text-center border border-gray-700">
@@ -171,6 +206,14 @@ function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   );
 }
 
