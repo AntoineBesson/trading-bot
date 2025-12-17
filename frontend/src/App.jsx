@@ -69,6 +69,7 @@ function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState([]);
+  const [logs, setLogs] = useState("");
 
   useEffect(() => {
     const fetchData = () => {
@@ -77,6 +78,7 @@ function App() {
           setData(res.data);
           setError(null);
           api.get('/history').then(res => setHistory(res.data));
+          api.get('/logs').then(res => setLogs(res.data.logs));
         })
         .catch(err => {
           // Only show error if we have never loaded data before
@@ -148,11 +150,24 @@ function App() {
       </div>
       
       {/* CHART SECTION */}
-      {history.length > 0 ? (
-        <EquityChart data={history} />
-      ) : (
-        <div className="text-gray-500 mt-8">Not enough data for chart yet...</div>
-      )}
+      <div className="w-full max-w-5xl mt-8">
+        <h2 className="text-xl font-bold mb-5 text-gray-200">Portfolio Performance</h2>
+        {history.length > 0 ? (
+          <EquityChart data={history} />
+        ) : (
+          <div className="text-gray-500 p-10 bg-gray-800 rounded-xl text-center border border-gray-700">
+            Not enough data for chart yet... (Waiting for market open)
+          </div>
+        )}
+      </div>
+
+      {/* LOGS SECTION */}
+      <div className="w-full max-w-5xl mt-8 mb-10">
+        <h2 className="text-xl font-bold mb-5 text-gray-200">System Logs</h2>
+        <div className="bg-black/50 p-4 rounded-xl border border-gray-700 font-mono text-xs text-gray-400 h-64 overflow-y-auto whitespace-pre-wrap">
+            {logs || "Loading logs..."}
+        </div>
+      </div>
     </div>
   );
 }

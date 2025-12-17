@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from contextlib import asynccontextmanager
 import logging
+import os
 from src.engine import TradingEngine
 
 # Configure logging
@@ -99,6 +100,26 @@ def start_strategy(strategy_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Strategy not found")
     return {"status": "started", "id": strategy_id}
+
+@app.get("/history")
+def get_history():
+    if not engine:
+        return []
+    return engine.equity_history
+
+@app.get("/logs")
+def get_logs():
+    try:
+        log_file = "trading_bot.log"
+        if not os.path.exists(log_file):
+             return {"logs": "Log file not found."}
+        
+        # Read last 100 lines
+        with open(log_file, "r") as f:
+            lines = f.readlines()
+            return {"logs": "".join(lines[-100:])}
+    except Exception as e:
+        return {"logs": f"Error reading logs: {str(e)}"}
 
 @app.get("/history")
 def get_history():
