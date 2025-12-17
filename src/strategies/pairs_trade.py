@@ -472,3 +472,72 @@ class PairsTradeStrategy(BaseStrategy):
             return 252
         periods_per_day = max(1, int(1440 / minutes))
         return periods_per_day * 252
+
+    @staticmethod
+    def backtest(df, entry_threshold=2.0, exit_threshold=0.0, lookback=20, return_trades=False):
+        """
+        Vectorized backtest for Permutation Testing.
+        Assumes 'df' contains the SPREAD history in the 'close' column.
+        """
+        import numpy as np
+        
+        # Calculate Z-Score of the spread
+        spread = df['close']
+        mean = spread.rolling(lookback).mean()
+        std = spread.rolling(lookback).std()
+        z_score = (spread - mean) / std
+        
+        # Vectorized Signal Generation
+        # 1 = Long Spread, -1 = Short Spread, 0 = Flat
+        signals = np.zeros(len(df))
+        
+        # We need to iterate to handle the state (holding until exit_threshold)
+        # Vectorizing stateful logic with different entry/exit thresholds is hard.
+        # We use a fast loop.
+        
+        pos = 0
+        z_values = z_score.values
+        signal_values = np.zeros(len(df))
+        
+        for i in range(len(df)):
+            z = z_values[i]
+            if np.isnan(z): continue
+            
+            if pos == 0:
+                if z > entry_threshold:
+                    pos = -1 # Short Spread
+                elif z < -entry_threshold:
+                    pos = 1 # Long Spread
+            elif pos == 1:
+                if z > -exit_threshold: # Reverted to mean (from below)
+                    pos = 0
+            elif pos == -1:
+                if z < exit_threshold: # Reverted to mean (from above)
+                    pos = 0
+            
+            signal_values[i] = pos
+            
+        # Returns
+        # Strategy Return = Position(t) * Return(t+1)
+        # Note: For spread trading, PnL is Change in Spread * Position
+        # It's not exactly pct_change, but for this generic tester we often use pct_change.
+        # However, spread can be negative, so pct_change is dangerous.
+        # Let's use absolute change for PnL if it's a spread.
+        
+        spread_change = spread.diff().shift(-1).fillna(0)
+        strategy_pnl = signal_values * spread_change
+        
+        # Convert to % Return for Monte Carlo (assuming 10k capital per trade)
+        # This is a simplification.
+        strategy_returns = strategy_pnl / 10000.0
+        
+        if return_trades:
+            # Return non-zero PnL days as "trades"
+            return strategy_returns[strategy_returns != 0].values
+            
+        # Profit Factor
+        gains = strategy_pnl[strategy_pnl > 0].sum()
+        losses = abs(strategy_pnl[strategy_pnl < 0].sum())
+        
+        if losses == 0: return 0 if gains == 0 else 999
+        return gains / losses

@@ -8,9 +8,9 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List
 from scipy.stats import norm
 
-from strategies.base_strategy import BaseStrategy
-from options.data_handler import OptionDataHandler
-from options.multileg import MultiLegExecutionHelper
+from .base_strategy import BaseStrategy
+from src.options.data_handler import OptionDataHandler
+from src.options.multileg import MultiLegExecutionHelper
 
 logger = logging.getLogger(__name__)
 
@@ -478,3 +478,45 @@ class VolatilityArbitrageStrategy(BaseStrategy):
             "trades": pd.DataFrame(trades),
             "equity_curve": pd.DataFrame(equity_data).set_index('date')
         }
+
+    @staticmethod
+    def backtest(df, entry_threshold=1.25, return_trades=False):
+        """
+        Vectorized backtest for Volatility Arb.
+        Requires 'iv' column in df.
+        """
+        if 'iv' not in df.columns:
+            return 0
+            
+        # Calculate Realized Volatility (RV)
+        # RV = StdDev(Log Returns) * Sqrt(252)
+        log_rets = np.log(df['close'] / df['close'].shift(1))
+        rv = log_rets.rolling(30).std() * np.sqrt(252)
+        
+        iv = df['iv']
+        
+        # Variance Risk Premium Approximation:
+        # Daily PnL of Short Vol ~= Expected Var - Realized Var
+        expected_var_daily = (iv ** 2) / 252.0
+        realized_var_daily = log_rets ** 2
+        
+        daily_pnl_per_unit = expected_var_daily - realized_var_daily
+        
+        signals = np.zeros(len(df))
+        # Enter Short Vol when IV is expensive
+        # We use fillna(0) to handle initial NaNs
+        condition = (iv > rv * entry_threshold).fillna(False)
+        signals[condition] = 1 
+        
+        # Scale Variance Diff to approx Return on Margin (approx 40x leverage effect of options)
+        strategy_returns = signals * daily_pnl_per_unit * 40.0
+        strategy_returns = strategy_returns.fillna(0)
+        
+        if return_trades:
+            return strategy_returns[strategy_returns != 0].values
+            
+        gains = strategy_returns[strategy_returns > 0].sum()
+        losses = abs(strategy_returns[strategy_returns < 0].sum())
+        
+        if losses == 0: return 0 if gains == 0 else 999
+        return gains / losses

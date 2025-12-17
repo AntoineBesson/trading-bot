@@ -2,6 +2,7 @@ import time
 import sys
 import logging
 import os
+import json
 import threading
 from datetime import datetime, time as dtime
 import pytz
@@ -31,7 +32,11 @@ class TradingEngine:
         """Initializes the bot components."""
         self._stop_event = threading.Event()
         self.thread = None
-        self.equity_history = []
+        
+        # History persistence
+        self.history_file = os.path.join(os.path.dirname(__file__), "data", "equity_history.json")
+        self.equity_history = self._load_history()
+
         # 1. Load Environment
         load_dotenv()
         
@@ -79,6 +84,19 @@ class TradingEngine:
 
         # 7. Reconcile State
         self.sm.reconcile_positions()
+        
+        # 8. Record initial state
+        self.record_history()
+
+    def _load_history(self):
+        """Loads equity history from disk."""
+        if os.path.exists(self.history_file):
+            try:
+                with open(self.history_file, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Failed to load history: {e}")
+        return []
 
     def record_history(self):
         """Saves the current portfolio value and a benchmark price."""
@@ -100,6 +118,13 @@ class TradingEngine:
             # Keep only last 1000 points to save memory
             if len(self.equity_history) > 1000:
                 self.equity_history.pop(0)
+            
+            # 4. Save to Disk
+            try:
+                with open(self.history_file, 'w') as f:
+                    json.dump(self.equity_history, f)
+            except Exception as e:
+                logger.error(f"Failed to save history: {e}")
                 
         except Exception as e:
             logger.error(f"Error recording history: {e}")

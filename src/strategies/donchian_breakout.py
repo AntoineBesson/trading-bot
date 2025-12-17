@@ -62,3 +62,35 @@ class DonchianBreakoutStrategy(BaseStrategy):
         # Helper to check if we are already long/short (Mock implementation)
         # In your real bot, check self.portfolio_manager or self.execution_handler
         return 0
+
+    @staticmethod
+    def backtest(df, lookback=20, return_trades=False):
+        """
+        Vectorized backtest for Permutation Testing.
+        :param df: DataFrame with 'close' column.
+        :param lookback: Lookback period for Donchian Channel.
+        :param return_trades: If True, returns list of trade returns. If False, returns Profit Factor.
+        """
+        # Signal: 1 if Close > Max(Last N), -1 if Close < Min(Last N)
+        upper = df['close'].rolling(lookback).max().shift(1)
+        lower = df['close'].rolling(lookback).min().shift(1)
+        
+        signals = np.zeros(len(df))
+        signals[df['close'] > upper] = 1
+        signals[df['close'] < lower] = -1
+        
+        # Forward fill positions (hold until signal changes)
+        signals = pd.Series(signals).replace(0, np.nan).ffill().fillna(0).values
+        
+        # Returns
+        market_returns = df['close'].pct_change().shift(-1).fillna(0)
+        strategy_returns = signals * market_returns
+        
+        if return_trades:
+            return strategy_returns[strategy_returns != 0].values
+            
+        gains = strategy_returns[strategy_returns > 0].sum()
+        losses = abs(strategy_returns[strategy_returns < 0].sum())
+        
+        if losses == 0: return 0 if gains == 0 else 999
+        return gains / losses
