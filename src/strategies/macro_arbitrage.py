@@ -7,8 +7,10 @@ from typing import Dict, List, Tuple, Optional
 from .base_strategy import BaseStrategy
 try:
     from src.tools.sentiment_analyzer import SentimentAnalyzer
+    from src.tools.build_macro_universe import load_macro_universe
 except ImportError:
     from tools.sentiment_analyzer import SentimentAnalyzer
+    from tools.build_macro_universe import load_macro_universe
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +28,24 @@ class MacroArbitrageStrategy(BaseStrategy):
                  execution_handler, 
                  portfolio_manager, 
                  strategy_id: str, 
-                 leader_laggard_map: Dict[str, str],
+                 leader_laggard_map: Dict[str, str] = None,
                  lookback_window_minutes: int = 15,
                  move_threshold_pct: float = 0.02,
-                 laggard_threshold_pct: float = 0.005):
+                 laggard_threshold_pct: float = 0.005,
+                 auto_calibrate: bool = False):
         """
         :param leader_laggard_map: Dictionary mapping Leader Symbol -> Laggard Symbol.
-                                   Example: {'JPM': 'KRE', 'NVDA': 'SOXL'}
+                                   If None, loads from src/data/lead_lag_universe.csv
         :param lookback_window_minutes: Time window to calculate the Leader's move.
         :param move_threshold_pct: Absolute % change in Leader to trigger a potential setup (e.g., 0.02 for 2%).
         :param laggard_threshold_pct: Max % change allowed in Laggard to consider it "dislocated" (e.g., 0.005 for 0.5%).
+        :param auto_calibrate: If True, runs correlation analysis on startup to set lookback_window.
         """
+        if leader_laggard_map is None:
+            leader_laggard_map = load_macro_universe()
+            if not leader_laggard_map:
+                logger.warning(f"[{strategy_id}] No universe map found. Strategy will be empty.")
+        
         # Extract all unique symbols from the map
         symbols = list(set(list(leader_laggard_map.keys()) + list(leader_laggard_map.values())))
         
@@ -51,6 +60,72 @@ class MacroArbitrageStrategy(BaseStrategy):
         
         # State tracking to avoid re-entering the same move
         self.last_trigger_time = {pair: None for pair in leader_laggard_map.keys()}
+        
+        if auto_calibrate:
+            self.calibrate_lag()
+
+    def calibrate_lag(self):
+        """
+        Automatically determines the best lookback window (lag) based on recent historical data.
+        """
+        logger.info(f"[{self.strategy_id}] Auto-calibrating lag...")
+        
+        # Fetch last 5 days of minute data
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=5)
+        
+        # Note: get_historical_bars might return a dict of DataFrames
+        bars_map = self.data_handler.get_historical_bars(
+            self.symbols,
+            timeframe_str='1Min',
+            start=start_date.strftime('%Y-%m-%d'),
+            end=end_date.strftime('%Y-%m-%d')
+        )
+        
+        if not bars_map:
+            logger.warning(f"[{self.strategy_id}] Not enough data to calibrate lag. Using default {self.lookback_window}m.")
+            return
+
+        lags = []
+        for leader, laggard in self.leader_laggard_map.items():
+            if leader in bars_map and laggard in bars_map:
+                leader_df = bars_map[leader]
+                laggard_df = bars_map[laggard]
+                
+                if leader_df.empty or laggard_df.empty:
+                    continue
+                    
+                # Calculate returns
+                leader_returns = leader_df['close'].pct_change().dropna()
+                laggard_returns = laggard_df['close'].pct_change().dropna()
+                
+                # Align indices (intersection of timestamps)
+                # Ensure indices are datetime
+                if not isinstance(leader_returns.index, pd.DatetimeIndex):
+                    leader_returns.index = pd.to_datetime(leader_returns.index)
+                if not isinstance(laggard_returns.index, pd.DatetimeIndex):
+                    laggard_returns.index = pd.to_datetime(laggard_returns.index)
+                    
+                common_idx = leader_returns.index.intersection(laggard_returns.index)
+                
+                if len(common_idx) < 100:
+                    logger.warning(f"[{self.strategy_id}] Insufficient overlapping data for {leader}-{laggard}.")
+                    continue
+                    
+                best_lag = self.analyze_lead_lag_correlation(
+                    leader_returns.loc[common_idx], 
+                    laggard_returns.loc[common_idx]
+                )
+                lags.append(best_lag)
+        
+        if lags:
+            avg_lag = int(np.mean(lags))
+            # Ensure reasonable bounds (e.g., 1 to 60 minutes)
+            avg_lag = max(1, min(60, avg_lag))
+            self.lookback_window = avg_lag
+            logger.info(f"[{self.strategy_id}] Calibrated lookback window to {self.lookback_window} minutes (Avg of {lags}).")
+        else:
+            logger.warning(f"[{self.strategy_id}] Lag calibration failed (no valid correlations). Keeping default {self.lookback_window}m.")
 
     def generate_signal(self):
         """

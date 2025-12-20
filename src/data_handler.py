@@ -7,7 +7,8 @@ import pandas as pd
 from dotenv import load_dotenv
 # --- Imports for the NEW 'alpaca-py' library ---
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical.news import NewsClient
+from alpaca.data.requests import StockBarsRequest, NewsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 
 # Load .env file (assuming it's in the root, one level up)
@@ -40,7 +41,33 @@ class DataHandler:
             self.api_key,
             self.secret_key
         )
+        self.news_client = NewsClient(
+            self.api_key,
+            self.secret_key
+        )
         print("Data Handler (alpaca-py) initialized.")
+
+    def get_news(self, symbol: str, start: str, end: str = None, limit: int = 50):
+        """
+        Fetches news articles for a given symbol.
+        """
+        try:
+            start_dt = datetime.fromisoformat(start)
+            end_dt = datetime.fromisoformat(end) if end else None
+            
+            request_params = NewsRequest(
+                symbols=symbol,
+                start=start_dt,
+                end=end_dt,
+                limit=limit
+            )
+            
+            news = self.news_client.get_news(request_params)
+            return news.news if news else []
+            
+        except Exception as e:
+            logger.error(f"Error fetching news for {symbol}: {e}")
+            return []
 
     def get_historical_bars(self, symbols, timeframe_str, start, end=None):
         """
