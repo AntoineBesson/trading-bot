@@ -1,71 +1,84 @@
-# Algorithmic Trading Bot (Equity & Options)
+# Algorithmic Trading Platform (Multi-Strategy & AI-Enhanced)
 
-A sophisticated, market-neutral trading system built on the Alpaca API. This bot specializes in **Pairs Trading** (Statistical Arbitrage) using both Equities and Options (Vega-Neutral Spreads).
+A professional-grade, multi-strategy trading system built on the Alpaca API. This platform combines statistical arbitrage, trend following, and volatility strategies with AI-driven regime detection and a modern web dashboard.
 
-It features a high-performance **Dynamic Universe Scanner** that continuously finds new cointegrated relationships across the S&P 500, and a "Capital Aware" execution engine that targets volatility-adjusted risk.
+It features a **Dynamic Universe Scanner**, a **Hidden Markov Model (HMM)** for market regime classification, and a **Portfolio Manager** for capital allocation and risk control.
 
 ## Key Features
 
-### 1. Dynamic Universe Scanning ("The Hunter")
-*   **Vectorized Speed:** Uses Matrix Operations (NumPy/Pandas) to filter 125,000+ potential pairs in seconds.
-*   **Multiprocessing:** Runs rigorous ADF Cointegration tests in parallel across all CPU cores.
-*   **Smart Filters:**
-    *   **Correlation:** > 0.8 (Finds related assets).
-    *   **Cointegration:** P-Value < 0.05 (Statistically significant).
-    *   **Mean Reversion:** Requires > 8 zero-crossings in 6 months (Ensures active trading).
-    *   **Blacklist:** Automatically ignores dual-class shares (e.g., GOOG vs GOOGL).
-    *   **Unique Selection:** Ensures no stock appears in more than one pair.
+### 1. Multi-Strategy Engine
+*   **Pairs Trading (Equity & Options):** Statistical arbitrage using cointegration and Vega-neutral option spreads.
+*   **Sector Momentum:** Monthly rebalancing strategy rotating into top-performing SPDR sectors.
+*   **Donchian Breakout:** Classic trend-following strategy for capturing large moves.
+*   **Volatility Arbitrage:** Gamma scalping strategy exploiting implied vs. realized volatility mispricing.
 
-### 2. Advanced Option Strategy ("The Sniper")
-*   **Vega-Neutrality:** Sizes option legs based on Implied Volatility (Vega) to isolate the spread movement and hedge against market-wide volatility shocks.
-*   **Volatility Targeting:** Dynamically sizes positions to risk exactly **1% of account equity** per trade.
-    *   High Volatility Pair -> Smaller Size.
-    *   Low Volatility Pair -> Larger Size.
-*   **Equity Guard:** Checks underlying stock prices first. If they haven't moved, it skips the expensive Option API calls to save rate limits and latency.
+### 2. AI-Powered Regime Detection
+*   **Hidden Markov Models (HMM):** Analyzes SPY returns to classify the market into **Bull**, **Bear**, or **Sideways** regimes.
+*   **Adaptive Risk:** Strategies automatically adjust their aggression or go flat based on the detected regime.
 
-### 3. Robust Architecture
-*   **Market Hours Aware:** Automatically sleeps when the US market is closed (9:30 AM - 4:00 PM ET).
-*   **Resilient:** Handles API errors, network drops, and delisted symbols gracefully.
-*   **Modular:** Separated concerns into Data, Execution, Strategy, and Universe Management.
+### 3. Advanced Backtesting Suite
+*   **Monte Carlo Simulation:** Stress-tests strategies against thousands of randomized market paths to estimate drawdown probabilities.
+*   **Permutation Tests:** Validates that strategy alpha is statistically significant and not just random noise.
+*   **Synthetic Data Generation:** Creates realistic market data for robust testing.
+
+### 4. Web Dashboard (React + Vite)
+*   **Real-time Monitoring:** Visualize equity curves, active positions, and strategy performance.
+*   **Interactive Charts:** Built with Recharts/Chart.js for deep dives into trade history.
+*   **Modern UI:** Fast, responsive interface powered by Vite and Tailwind CSS.
+
+### 5. Robust Architecture
+*   **Portfolio Manager ("The CFO"):** Centralized capital allocation and global risk management.
+*   **Dynamic Universe ("The Hunter"):** Scans 125,000+ pairs in seconds using vectorized NumPy operations.
+*   **Dockerized:** Full container support for easy deployment.
 
 ---
 
 ## Project Structure
 
 ```
-src/
-├── main.py                # Entry point. Orchestrates the bot, scanning, and trading loop.
-├── universe_manager.py    # The "Hunter". Scans S&P 500 for cointegrated pairs.
-├── data_handler.py        # Alpaca Data API wrapper (Stocks).
-├── execution.py           # Alpaca Trading API wrapper.
-├── strategies/
-│   ├── option_pairs.py    # The core Option Strategy (Vol Targeting, Greeks).
-│   ├── pairs_trade.py     # Classic Equity Pairs Strategy.
-│   └── base_strategy.py   # Abstract base class.
-└── options/
-    ├── greeks.py          # Black-Scholes & Greeks calculator.
-    ├── data_handler.py    # Option Chain & Snapshot manager.
-    └── multileg.py        # Multi-leg order execution helper.
+├── src/
+│   ├── main.py                # Entry point. Orchestrates the bot.
+│   ├── portfolio_manager.py   # Allocates capital across strategies.
+│   ├── regime_detector.py     # HMM model for market state detection.
+│   ├── strategies/            # Strategy implementations.
+│   │   ├── donchian_breakout.py
+│   │   ├── sector_momentum.py
+│   │   ├── volatility_arb.py
+│   │   └── pairs_trade.py
+│   ├── backtest/              # Advanced testing tools.
+│   │   ├── monte_carlo.py
+│   │   └── permutation_tester.py
+│   └── options/               # Option pricing and execution.
+├── frontend/                  # React + Vite Web Dashboard.
+├── notebooks/                 # Research and Analysis.
+├── tests/                     # Unit and Integration tests.
+├── Dockerfile                 # Container definition.
+└── docker-compose.yml         # Multi-container orchestration.
 ```
 
 ## Getting Started
 
 ### 1. Prerequisites
 *   Python 3.10+
-*   Alpaca Markets Account (Paper or Live)
+*   Node.js 18+ (for Frontend)
+*   Docker (Optional)
+*   Alpaca Markets Account
 
-### 2. Installation
+### 2. Installation (Local)
+
+**Backend:**
 ```powershell
-# Clone the repo
 git clone <repo-url>
 cd trading-bot
-
-# Create Virtual Environment
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-# Install Dependencies
 pip install -r requirements.txt
+```
+
+**Frontend:**
+```powershell
+cd frontend
+npm install
 ```
 
 ### 3. Configuration
@@ -76,34 +89,37 @@ ALPACA_SECRET_KEY=skxxxxxxxxxxxxxxxxxxxx
 ALPACA_BASE_URL=https://paper-api.alpaca.markets
 ```
 
-### 4. Running the Bot
+### 4. Running the Platform
+
+**Using Docker (Recommended):**
 ```powershell
-python src/main.py
+docker-compose up --build
 ```
-The bot will:
-1.  Connect to Alpaca.
-2.  Scan the `data/universe.csv` (or default S&P 500 list) for the best 30 pairs.
-3.  Start the trading loop (checking every minute during market hours).
+
+**Manual Run:**
+*   **Backend:** `python src/main.py`
+*   **Frontend:** `cd frontend && npm run dev`
 
 ## Strategy Details
 
-### Universe Selection
+### Universe Selection ("The Hunter")
 The `UniverseManager` performs a two-step scan:
-1.  **Fast Filter:** Calculates the Correlation Matrix of returns for all 500 stocks. Keeps pairs with correlation > 0.8.
-2.  **Slow Filter:** Runs the Engle-Granger Cointegration Test (ADF) on the survivors. Keeps pairs with P-Value < 0.05 and frequent mean reversion.
+1.  **Fast Filter:** Calculates Correlation Matrix (> 0.8).
+2.  **Slow Filter:** Runs Engle-Granger Cointegration Test (P-Value < 0.05).
 
 ### Position Sizing (Vol Targeting)
-The bot calculates position size using the formula:
-$$ \text{Contracts} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Spread Volatility} \times 100} $$
-This ensures consistent risk exposure regardless of the asset's price or volatility.
+Strategies use volatility targeting to normalize risk:
+$$ \text{Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Asset Volatility}} $$
 
 ## Notebooks
-*   `notebooks/0_find_pairs.ipynb`: Research tool to visualize cointegration.
-*   `notebooks/02_option_pair_trading.ipynb`: Backtesting engine for the Option Strategy.
+*   `notebooks/0_find_pairs.ipynb`: Cointegration research.
+*   `notebooks/01_run_backtests.ipynb`: General strategy backtesting.
+*   `notebooks/03_volatility_arb_backtest.ipynb`: Volatility arb analysis.
+*   `notebooks/04_system_backtest.ipynb`: Full system simulation.
 
 ## Testing
 ```powershell
 pytest
 ```
-Includes unit tests for Greeks calculation, strategy logic, and data handling.
+Includes unit tests for Greeks, strategies, and backtesting engines.
 
