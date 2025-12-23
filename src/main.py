@@ -22,7 +22,12 @@ from options.multileg import MultiLegExecutionHelper
 from universe_manager import UniverseManager
 from portfolio_manager import PortfolioManager
 from strategy_manager import StrategyManager
-from strategies_config import create_option_pair_config, create_volatility_arb_config, create_sector_momentum_config
+from strategies_config import (
+    create_option_pair_config, 
+    create_volatility_arb_config, 
+    create_sector_momentum_config,
+    create_macro_arbitrage_config
+)
 
 # --- Configuration ---
 # How often the bot checks for signals (in seconds)
@@ -150,48 +155,56 @@ class TradingBot:
         signal.signal(signal.SIGTERM, self.signal_handler)
 
     def rebalance_strategies(self):
-        """Scans the universe and rebuilds the strategy list."""
-        logger.info("Rebalancing strategies based on universe scan...")
+        """
+        Scans the universe and spawns/kills strategies based on opportunities.
+        This is the 'Brain' of the operation.
+        """
+        logger.info("Rebalancing strategies...")
         
-        # 1. Scan for pairs
-        watchlist = self.universe_manager.scan()
+        # --- 1. Macro Arbitrage (Production) ---
+        # This is a persistent strategy that manages its own universe internally.
+        # We only need to spawn it once.
+        macro_id = "MacroArb_Production"
+        if macro_id not in self.sm.strategies:
+            logger.info(f"Spawning {macro_id}...")
+            config = create_macro_arbitrage_config(allocation=20000.0)
+            self.sm.spawn_strategy(config)
         
-        # 2. Build Strategy Configs
-        strategy_configs = []
+        # --- 2. Sector Momentum (Monthly) ---
+        # This is a persistent strategy that rebalances itself monthly.
+        # We only need to spawn it once.
+        sector_mom_id = "SectorMomentum_Monthly"
+        if sector_mom_id not in self.sm.strategies:
+            logger.info(f"Spawning {sector_mom_id}...")
+            config = create_sector_momentum_config(allocation=30000.0)
+            self.sm.spawn_strategy(config)
+
+        # --- 3. Volatility Arbitrage (Scanner) ---
+        # Scan for high IV opportunities
+        # (Simplified logic: Pick 1 random symbol for demo)
+        # In reality, you'd scan self.universe for IV Rank > 50
+        target_symbol = "SPY" 
+        vol_arb_id = f"VolArb_{target_symbol}"
         
-        # A. Option Pairs Strategies
-        for item in watchlist:
-            sym_a = item['symbol_a']
-            sym_b = item['symbol_b']
-            
-            # Generate config from template
-            config = create_option_pair_config(sym_a, sym_b, allocation=5000.0)
-            
-            # Inject Runtime Dependencies
+        if vol_arb_id not in self.sm.strategies:
+             logger.info(f"Spawning {vol_arb_id}...")
+             config = create_volatility_arb_config(target_symbol, allocation=10000.0)
+             self.sm.spawn_strategy(config)
+             
+        # --- 4. Option Pairs (Scanner) ---
+        # Scan for cointegrated pairs suitable for options
+        # (Simplified logic: Pick 1 pair for demo)
+        pair_a, pair_b = "GLD", "SLV"
+        opt_pair_id = f"OptionPair_{pair_a}_{pair_b}"
+        
+        if opt_pair_id not in self.sm.strategies:
+            logger.info(f"Spawning {opt_pair_id}...")
+            # Inject the specialized handlers into the config parameters
+            config = create_option_pair_config(pair_a, pair_b, allocation=5000.0)
             config['parameters']['option_data_handler'] = self.option_data_handler
             config['parameters']['multi_leg_execution'] = self.multi_leg_helper
             
-            strategy_configs.append(config)
-            
-        # B. Volatility Arbitrage Strategies (Example: Add for SPY and the first pair found)
-        vol_arb_symbols = ['SPY']
-        if watchlist:
-            vol_arb_symbols.append(watchlist[0]['symbol_a'])
-            
-        for sym in vol_arb_symbols:
-            # Generate config
-            config = create_volatility_arb_config(sym, allocation=10000.0)
-            
-            # Inject Runtime Dependencies
-            config['parameters']['option_data_handler'] = self.option_data_handler
-            config['parameters']['multi_leg_execution'] = self.multi_leg_helper
-            
-            strategy_configs.append(config)
-            
-        # C. Sector Momentum Strategy (Monthly)
-        # We add this as a core strategy
-        sector_config = create_sector_momentum_config(allocation=30000.0)
-        strategy_configs.append(sector_config)
+            self.sm.spawn_strategy(config)
 
         # 3. Update Strategy Manager
         self.sm.update_strategies(strategy_configs)

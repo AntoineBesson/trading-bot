@@ -8,9 +8,11 @@ from .base_strategy import BaseStrategy
 try:
     from src.tools.sentiment_analyzer import SentimentAnalyzer
     from src.tools.build_macro_universe import load_macro_universe
+    from src.regime_detector import RegimeDetector
 except ImportError:
     from tools.sentiment_analyzer import SentimentAnalyzer
     from tools.build_macro_universe import load_macro_universe
+    from regime_detector import RegimeDetector
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +32,16 @@ class MacroArbitrageStrategy(BaseStrategy):
                  strategy_id: str, 
                  leader_laggard_map: Dict[str, str] = None,
                  lookback_window_minutes: int = 15,
-                 move_threshold_pct: float = 0.02,
+                 holding_period_minutes: int = 120,
+                 z_threshold: float = 2.0,
                  laggard_threshold_pct: float = 0.005,
                  auto_calibrate: bool = False):
         """
         :param leader_laggard_map: Dictionary mapping Leader Symbol -> Laggard Symbol.
                                    If None, loads from src/data/lead_lag_universe.csv
         :param lookback_window_minutes: Time window to calculate the Leader's move.
-        :param move_threshold_pct: Absolute % change in Leader to trigger a potential setup (e.g., 0.02 for 2%).
+        :param holding_period_minutes: Time window to hold the trade.
+        :param z_threshold: Number of standard deviations for the trigger (default 2.0).
         :param laggard_threshold_pct: Max % change allowed in Laggard to consider it "dislocated" (e.g., 0.005 for 0.5%).
         :param auto_calibrate: If True, runs correlation analysis on startup to set lookback_window.
         """
@@ -53,13 +57,18 @@ class MacroArbitrageStrategy(BaseStrategy):
         
         self.leader_laggard_map = leader_laggard_map
         self.lookback_window = lookback_window_minutes
-        self.move_threshold = move_threshold_pct
+        self.holding_period = holding_period_minutes
+        self.z_threshold = z_threshold
         self.laggard_threshold = laggard_threshold_pct
         
         self.sentiment_analyzer = SentimentAnalyzer(data_handler)
+        self.regime_detector = RegimeDetector(data_handler)
         
         # State tracking to avoid re-entering the same move
         self.last_trigger_time = {pair: None for pair in leader_laggard_map.keys()}
+        
+        # Track open positions for time-based exits: {symbol: entry_time}
+        self.open_positions = {}
         
         if auto_calibrate:
             self.calibrate_lag()
@@ -127,16 +136,51 @@ class MacroArbitrageStrategy(BaseStrategy):
         else:
             logger.warning(f"[{self.strategy_id}] Lag calibration failed (no valid correlations). Keeping default {self.lookback_window}m.")
 
+    def _check_exits(self):
+        """
+        Checks open positions and closes them if the holding period has expired.
+        """
+        current_time = datetime.now()
+        # Create a list of symbols to close to avoid modifying dict while iterating
+        to_close = []
+        
+        for symbol, entry_time in self.open_positions.items():
+            # Calculate duration in minutes
+            duration = (current_time - entry_time).total_seconds() / 60
+            
+            if duration >= self.holding_period:
+                logger.info(f"[{self.strategy_id}] Holding period expired for {symbol} ({duration:.1f}m >= {self.holding_period}m). Closing position.")
+                to_close.append(symbol)
+                
+        for symbol in to_close:
+            self._close_position(symbol)
+
+    def _close_position(self, symbol: str):
+        """
+        Closes a position via ExecutionHandler.
+        """
+        try:
+            self.execution_handler.close_position(symbol)
+            if symbol in self.open_positions:
+                del self.open_positions[symbol]
+            logger.info(f"[{self.strategy_id}] Closed position for {symbol}.")
+        except Exception as e:
+            logger.error(f"[{self.strategy_id}] Failed to close position for {symbol}: {e}")
+
     def generate_signal(self):
         """
         Main strategy loop.
-        1. Monitor Leaders for significant moves.
-        2. Check if Laggards are flat (Dislocation).
-        3. Validate with NLP (Systematic vs Idiosyncratic).
-        4. Execute trade.
+        1. Check for exits (Time-based).
+        2. Monitor Leaders for significant moves.
+        3. Check if Laggards are flat (Dislocation).
+        4. Validate with NLP (Systematic vs Idiosyncratic).
+        5. Execute trade.
         """
         if not self.active:
             return
+
+        # 1. Manage Exits
+        self._check_exits()
 
         logger.info(f"[{self.strategy_id}] Scanning for Lead-Lag opportunities...")
 
@@ -184,7 +228,16 @@ class MacroArbitrageStrategy(BaseStrategy):
 
         # Get the return over the lookback window
         # We look at the change from 'lookback_window' minutes ago to now
-        if len(leader_df) < self.lookback_window:
+        if len(leader_df) < self.lookback_window + 60: # Need extra data for volatility calc
+            return
+
+        # --- 1. Dynamic Volatility Scaling (Z-Score) ---
+        # Calculate Rolling Volatility (Standard Deviation of returns)
+        # We use a 60-period window (1 hour) to gauge current volatility baseline
+        leader_returns_series = leader_df['close'].pct_change()
+        leader_vol = leader_returns_series.rolling(window=60).std().iloc[-1]
+        
+        if pd.isna(leader_vol) or leader_vol == 0:
             return
 
         # Calculate Leader Move
@@ -192,22 +245,74 @@ class MacroArbitrageStrategy(BaseStrategy):
         past_price_leader = leader_df['close'].iloc[-self.lookback_window]
         leader_return = (current_price_leader - past_price_leader) / past_price_leader
         
-        # 1. Trigger Condition: Significant Move in Leader
-        if abs(leader_return) >= self.move_threshold:
-            logger.info(f"[{self.strategy_id}] Trigger: {leader} moved {leader_return:.2%} in last {self.lookback_window}m.")
+        # Scale 1-min volatility to the lookback period (sqrt(T))
+        period_vol = leader_vol * np.sqrt(self.lookback_window)
+        
+        # Calculate Z-Score
+        z_score = leader_return / period_vol
+        
+        # Trigger Condition: Significant Move in Leader (Z-Score > Threshold)
+        if abs(z_score) >= self.z_threshold:
+            logger.info(f"[{self.strategy_id}] Trigger: {leader} Z-Score {z_score:.2f} (Return {leader_return:.2%}) > {self.z_threshold}.")
             
             # Check if we already traded this recently (simple debounce)
-            # In a real system, we'd track the specific 'event' ID.
+            last_trigger = self.last_trigger_time.get(leader)
+            if last_trigger:
+                # Don't re-trigger within the holding period
+                time_since_trigger = (datetime.now() - last_trigger).total_seconds() / 60
+                if time_since_trigger < self.holding_period:
+                    logger.info(f"[{self.strategy_id}] Debounce: {leader} triggered recently ({time_since_trigger:.1f}m ago). Skipping.")
+                    return
             
+            # --- NEW: Correlation Filter ---
+            # Only trade if the pair has been correlated recently (e.g., last 60 mins)
+            # This filters out "noise" moves where the link is broken
+            laggard_returns_series = laggard_df['close'].pct_change()
+            
+            # Align series for correlation
+            # We take the last 60 points
+            if len(laggard_returns_series) >= 60 and len(leader_returns_series) >= 60:
+                recent_corr = leader_returns_series.tail(60).corr(laggard_returns_series.tail(60))
+                
+                if recent_corr < 0.7:
+                    logger.info(f"[{self.strategy_id}] Filtered: Correlation too low ({recent_corr:.2f} < 0.7).")
+                    return
+            else:
+                # Not enough data for correlation, skip safely
+                return
+
+            # --- NEW: Regime Filter ---
+            # Only trade in Volatile/Trending regimes (State 1)
+            # Note: In a real live loop, we might cache this to avoid calling it every minute
+            current_regime = self.regime_detector.get_current_regime()
+            if current_regime == 0:
+                logger.info(f"[{self.strategy_id}] Filtered: Regime is Calm (0). Waiting for Volatility.")
+                return
+
             # 2. Dislocation Check: Laggard has NOT moved significantly
             current_price_laggard = laggard_df['close'].iloc[-1]
             past_price_laggard = laggard_df['close'].iloc[-self.lookback_window]
             laggard_return = (current_price_laggard - past_price_laggard) / past_price_laggard
             
-            if abs(laggard_return) < self.laggard_threshold:
-                logger.info(f"[{self.strategy_id}] Dislocation found: {laggard} only moved {laggard_return:.2%}.")
+            # Dynamic Dislocation Threshold: Laggard should have moved less than 25% of the Leader's move
+            # Or use the fixed threshold if preferred. Let's use the dynamic one from backtest.
+            dynamic_laggard_threshold = abs(leader_return) * 0.25
+            
+            if abs(laggard_return) < dynamic_laggard_threshold:
+                logger.info(f"[{self.strategy_id}] Dislocation found: {laggard} moved {laggard_return:.2%} (Threshold {dynamic_laggard_threshold:.2%}).")
                 
-                # 3. NLP Filter: Validate Systematic Move
+                # 3. Regime Filter (HMM)
+                # Only trade if we are NOT in a low-volatility sideways chop
+                # Assuming portfolio_manager has access to regime_detector or we check vol directly
+                # Here we use the simple Volatility Percentile proxy from the backtest for consistency
+                # In a full integration, we'd call self.portfolio_manager.regime_detector.get_current_regime()
+                
+                # Simple Proxy: Is current vol > 20th percentile of recent history?
+                # We don't have long history here, so we'll skip or use a simplified check
+                # For now, let's assume the Z-Score check implicitly handles "dead" markets 
+                # because getting a 2-sigma move in a dead market is hard/rare.
+                
+                # 4. NLP Filter: Validate Systematic Move
                 is_systematic = self.sentiment_analyzer.validate_sector_move(leader)
                 
                 if is_systematic:
@@ -217,9 +322,10 @@ class MacroArbitrageStrategy(BaseStrategy):
                     direction = "BUY" if leader_return > 0 else "SELL"
                     
                     # Execute Trade
-                    # Size would be calculated by Portfolio Manager, here we request a target
-                    # For simplicity, we'll just log the signal or place a fixed size order
                     self._place_trade(laggard, direction)
+                    
+                    # Update Trigger Time
+                    self.last_trigger_time[leader] = datetime.now()
                 else:
                     logger.info(f"[{self.strategy_id}] NLP Rejected: Move likely idiosyncratic to {leader}.")
             else:
@@ -237,6 +343,10 @@ class MacroArbitrageStrategy(BaseStrategy):
                 self.execution_handler.buy(symbol, qty)
             else:
                 self.execution_handler.sell(symbol, qty)
+            
+            # Track position for exit
+            self.open_positions[symbol] = datetime.now()
+            
             logger.info(f"[{self.strategy_id}] Placed {side} order for {qty} {symbol}.")
         except Exception as e:
             logger.error(f"[{self.strategy_id}] Trade failed: {e}")

@@ -1,5 +1,7 @@
 from strategies.option_pairs import OptionPairsStrategy
 from strategies.volatility_arb import VolatilityArbitrageStrategy
+from strategies.macro_arbitrage import MacroArbitrageStrategy
+from tools.build_macro_universe import load_macro_universe
 
 # --- Universe Definitions ---
 SECTOR_UNIVERSE = [
@@ -103,5 +105,38 @@ def create_sector_momentum_config(allocation=30000.0):
             'safety_asset': 'SHV',
             'top_n': 3,
             'initial_capital': allocation
+        }
+    }
+
+def create_macro_arbitrage_config(allocation=20000.0):
+    """
+    Generates a configuration dictionary for the Macro Arbitrage strategy.
+    Uses the optimized 'Production Universe' (SPY-IWM, JPM-KRE, etc.).
+    """
+    strategy_id = "MacroArb_Production"
+    
+    # Load the specific production universe
+    # We pass the filename to the loader, or we manually define it here if the loader is rigid.
+    # Assuming load_macro_universe can take a path or we just define the dict here for safety.
+    
+    production_pairs = {
+        'SPY': 'IWM',
+        'JPM': 'KRE',
+        'NVDA': 'SOXQ',
+        'XOM': 'XOP'
+    }
+    
+    return {
+        'id': strategy_id,
+        'strategy_class': MacroArbitrageStrategy,
+        'allocation': allocation,
+        'parameters': {
+            'strategy_id': strategy_id,
+            'leader_laggard_map': production_pairs,
+            'lookback_window_minutes': 15,   # Optimized
+            'holding_period_minutes': 120,   # Optimized
+            'z_threshold': 2.0,              # Optimized
+            'laggard_threshold_pct': 0.005,
+            'auto_calibrate': False          # Use fixed optimized params
         }
     }

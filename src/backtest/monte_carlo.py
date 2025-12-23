@@ -12,31 +12,28 @@ class MonteCarloOptimizer:
         
     def run_simulation(self, num_simulations=1000, num_trades=None):
         """
-        Runs the Monte Carlo simulation.
+        Runs the Monte Carlo simulation (Fully Vectorized).
         :param num_trades: How many trades to simulate into the future (default: length of history)
         """
         if num_trades is None:
             num_trades = len(self.trades)
             
-        results = []
+        # 1. Generate a 2D Matrix of random returns [simulations x trades]
+        # We sample WITH replacement to simulate streaks
+        random_returns_matrix = np.random.choice(self.trades, size=(num_simulations, num_trades), replace=True)
         
-        # 1. Run N Simulations
-        for _ in range(num_simulations):
-            # Sampling WITH replacement allows us to simulate "streaks" of bad luck
-            # that might not have happened in history but COULD happen.
-            random_returns = np.random.choice(self.trades, size=num_trades, replace=True)
+        # 2. Calculate Cumulative Returns (Vectorized Compounding)
+        # (1 + r1) * (1 + r2) ...
+        cum_returns = np.cumprod(1 + random_returns_matrix, axis=1)
+        
+        # 3. Apply to Initial Capital
+        equity_curves = self.capital * cum_returns
+        
+        # 4. Prepend Initial Capital to every simulation (for the plot starting point)
+        start_cap_column = np.full((num_simulations, 1), self.capital)
+        results = np.hstack([start_cap_column, equity_curves])
             
-            # Calculate Equity Curve
-            equity_curve = [self.capital]
-            current_cap = self.capital
-            
-            for ret in random_returns:
-                current_cap *= (1 + ret)
-                equity_curve.append(current_cap)
-            
-            results.append(equity_curve)
-            
-        return np.array(results)
+        return results
 
     def analyze_results(self, simulations):
         """
