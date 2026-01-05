@@ -23,8 +23,7 @@ from strategies_config import (
     create_option_pair_config, 
     create_volatility_arb_config, 
     create_sector_momentum_config,
-    create_macro_arbitrage_config,
-    create_laggard_config
+    create_macro_arbitrage_config
 )
 
 # --- Configuration ---
@@ -173,10 +172,6 @@ class TradingEngine:
         # D. Macro Arbitrage Strategy
         macro_config = create_macro_arbitrage_config(allocation=20000.0)
         strategy_configs.append(macro_config)
-
-        # E. Laggard Strategy
-        laggard_config = create_laggard_config(allocation=15000.0)
-        strategy_configs.append(laggard_config)
 
         # 3. Update Strategy Manager
         self.sm.update_strategies(strategy_configs)
