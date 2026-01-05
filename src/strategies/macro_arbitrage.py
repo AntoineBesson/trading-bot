@@ -322,7 +322,7 @@ class MacroArbitrageStrategy(BaseStrategy):
                     direction = "BUY" if leader_return > 0 else "SELL"
                     
                     # Execute Trade
-                    self._place_trade(laggard, direction)
+                    self._place_trade(laggard, direction, current_price_laggard)
                     
                     # Update Trigger Time
                     self.last_trigger_time[leader] = datetime.now()
@@ -331,13 +331,42 @@ class MacroArbitrageStrategy(BaseStrategy):
             else:
                 logger.info(f"[{self.strategy_id}] No Dislocation: {laggard} already moved {laggard_return:.2%}.")
 
-    def _place_trade(self, symbol: str, side: str):
+    def _place_trade(self, symbol: str, side: str, price: float):
         """
-        Executes the trade via ExecutionHandler.
+        Executes the trade via ExecutionHandler with dynamic sizing.
         """
-        # This is a simplified placeholder. 
-        # In the real bot, we'd calculate position size based on volatility/risk.
-        qty = 10 # Placeholder
+        # 1. Get Strategy Allocation
+        if hasattr(self.portfolio_manager, 'allocations') and self.strategy_id in self.portfolio_manager.allocations:
+            alloc_data = self.portfolio_manager.allocations[self.strategy_id]
+            total_equity = alloc_data['equity'] * alloc_data.get('leverage', 1.0)
+        else:
+            # Fallback if PM not configured correctly
+            total_equity = 10000.0 
+            logger.warning(f"[{self.strategy_id}] No allocation found in PM. Using fallback ${total_equity}.")
+
+        # 2. Calculate Position Size
+        # Divide capital equally among all pairs in the universe
+        num_pairs = len(self.leader_laggard_map)
+        if num_pairs == 0: num_pairs = 1
+        
+        target_equity_per_trade = total_equity / num_pairs
+        
+        # Calculate quantity (floor)
+        if price > 0:
+            qty = int(target_equity_per_trade / price)
+        else:
+            qty = 0
+            
+        if qty < 1:
+            logger.warning(f"[{self.strategy_id}] Calculated quantity is 0 for {symbol} (Price: ${price:.2f}, Alloc: ${target_equity_per_trade:.2f}). Skipping.")
+            return
+
+        # 3. Check Budget with Portfolio Manager
+        estimated_cost = qty * price
+        if not self.portfolio_manager.check_trade(self.strategy_id, estimated_cost):
+             logger.warning(f"[{self.strategy_id}] PM denied trade for {symbol} (Cost: ${estimated_cost:.2f}).")
+             return
+
         try:
             if side == "BUY":
                 self.execution_handler.buy(symbol, qty)
@@ -347,7 +376,7 @@ class MacroArbitrageStrategy(BaseStrategy):
             # Track position for exit
             self.open_positions[symbol] = datetime.now()
             
-            logger.info(f"[{self.strategy_id}] Placed {side} order for {qty} {symbol}.")
+            logger.info(f"[{self.strategy_id}] Placed {side} order for {qty} {symbol} (${estimated_cost:.2f}).")
         except Exception as e:
             logger.error(f"[{self.strategy_id}] Trade failed: {e}")
 
