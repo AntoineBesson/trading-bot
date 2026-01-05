@@ -109,7 +109,7 @@ The `UniverseManager` performs a two-step scan:
 
 ### Position Sizing (Vol Targeting)
 Strategies use volatility targeting to normalize risk:
-$$ \text{Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Asset Volatility}} $$
+$$\text{Size} = \frac{\text{Account Equity} \times \text{Risk \%}}{\text{Asset Volatility}} $$
 
 ## Notebooks
 *   `notebooks/0_find_pairs.ipynb`: Cointegration research.
