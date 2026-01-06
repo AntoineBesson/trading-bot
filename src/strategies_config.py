@@ -131,7 +131,6 @@ def create_macro_arbitrage_config(allocation=20000.0):
         'strategy_class': MacroArbitrageStrategy,
         'allocation': allocation,
         'parameters': {
-            'strategy_id': strategy_id,
             'leader_laggard_map': production_pairs,
             'lookback_window_minutes': 15,   # Optimized
             'holding_period_minutes': 120,   # Optimized
