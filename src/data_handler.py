@@ -10,6 +10,7 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.news import NewsClient
 from alpaca.data.requests import StockBarsRequest, NewsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.data.enums import DataFeed
 
 # Load .env file (assuming it's in the root, one level up)
 env_path = Path(__file__).resolve().parents[1] / ".env"
@@ -108,7 +109,8 @@ class DataHandler:
                 symbol_or_symbols=symbols,
                 timeframe=timeframe,
                 start=start_dt,
-                end=end_dt
+                end=end_dt,
+                feed=DataFeed.IEX,  # Use IEX feed (free tier)
             )
             
             print("Submitting data request to Alpaca...")
@@ -160,7 +162,8 @@ class DataHandler:
                 symbol_or_symbols=[symbol],
                 timeframe=TimeFrame.Minute,  # Get the finest grain
                 start=datetime.now(timezone.utc) - timedelta(days=2),
-                limit=1  # Get only the last one
+                limit=1,  # Get only the last one
+                feed=DataFeed.IEX,
             )
             bars = self.client.get_stock_bars(request_params)
             latest_bar = self._extract_latest_from_bars(bars, symbol)
