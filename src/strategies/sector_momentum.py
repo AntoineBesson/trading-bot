@@ -6,8 +6,8 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 
-from strategies.base_strategy import BaseStrategy
-from strategies_config import SECTOR_UNIVERSE, DEFENSIVE_ASSETS
+from src.strategies.base_strategy import BaseStrategy
+from src.strategies_config import DEFENSIVE_ASSETS, SECTOR_UNIVERSE
 
 logger = logging.getLogger(__name__)
 

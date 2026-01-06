@@ -1,30 +1,27 @@
-import time
-import sys
+import json
 import logging
 import os
-import json
 import threading
+import time
 from datetime import datetime, time as dtime
+
+import pandas as pd
 import pytz
 from dotenv import load_dotenv
-import pandas as pd
 
-# Add src to path if needed, though usually not needed if running as module
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from data_handler import DataHandler
-from execution import ExecutionHandler
-from options.data_handler import OptionDataHandler
-from options.multileg import MultiLegExecutionHelper
-from universe_manager import UniverseManager
-from portfolio_manager import PortfolioManager
-from strategy_manager import StrategyManager
-from strategies_config import (
-    create_option_pair_config, 
-    create_volatility_arb_config, 
+from src.data_handler import DataHandler
+from src.execution import ExecutionHandler
+from src.options.data_handler import OptionDataHandler
+from src.options.multileg import MultiLegExecutionHelper
+from src.portfolio_manager import PortfolioManager
+from src.strategy_manager import StrategyManager
+from src.strategies_config import (
+    create_macro_arbitrage_config,
+    create_option_pair_config,
     create_sector_momentum_config,
-    create_macro_arbitrage_config
+    create_volatility_arb_config,
 )
+from src.universe_manager import UniverseManager
 
 # --- Configuration ---
 SLEEP_DELAY = 60 

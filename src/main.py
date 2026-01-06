@@ -1,33 +1,30 @@
-import time
-import sys
-import signal
 import logging
 import os
+import signal
+import sys
+import time
 from datetime import datetime, time as dtime
+
+import pandas as pd
 import pytz
 from dotenv import load_dotenv
-import pandas as pd
 
-# --- Import your modules ---
-# (We add 'src' to the path so this works no matter where you run it from)
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-from data_handler import DataHandler
-from execution import ExecutionHandler
-from strategies.pairs_trade import PairsTradeStrategy
-from strategies.option_pairs import OptionPairsStrategy
-from strategies.volatility_arb import VolatilityArbitrageStrategy
-from options.data_handler import OptionDataHandler
-from options.multileg import MultiLegExecutionHelper
-from universe_manager import UniverseManager
-from portfolio_manager import PortfolioManager
-from strategy_manager import StrategyManager
-from strategies_config import (
-    create_option_pair_config, 
-    create_volatility_arb_config, 
+from src.data_handler import DataHandler
+from src.execution import ExecutionHandler
+from src.options.data_handler import OptionDataHandler
+from src.options.multileg import MultiLegExecutionHelper
+from src.portfolio_manager import PortfolioManager
+from src.strategy_manager import StrategyManager
+from src.strategies.pairs_trade import PairsTradeStrategy
+from src.strategies.option_pairs import OptionPairsStrategy
+from src.strategies.volatility_arb import VolatilityArbitrageStrategy
+from src.strategies_config import (
+    create_macro_arbitrage_config,
+    create_option_pair_config,
     create_sector_momentum_config,
-    create_macro_arbitrage_config
+    create_volatility_arb_config,
 )
+from src.universe_manager import UniverseManager
 
 # --- Configuration ---
 # How often the bot checks for signals (in seconds)

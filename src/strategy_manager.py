@@ -1,8 +1,9 @@
 import logging
-from typing import Dict, List, Any
-from strategies.option_pairs import OptionPairsStrategy
-from regime_detector import RegimeDetector
-# from strategies.pairs_trade import PairsTradeStrategy # Uncomment if needed
+from typing import Any, Dict, List
+
+from src.regime_detector import RegimeDetector
+from src.strategies.option_pairs import OptionPairsStrategy
+# from src.strategies.pairs_trade import PairsTradeStrategy  # Uncomment if needed
 
 logger = logging.getLogger(__name__)
 

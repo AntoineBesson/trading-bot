@@ -1,7 +1,7 @@
-from strategies.option_pairs import OptionPairsStrategy
-from strategies.volatility_arb import VolatilityArbitrageStrategy
-from strategies.macro_arbitrage import MacroArbitrageStrategy
-from tools.build_macro_universe import load_macro_universe
+from src.strategies.option_pairs import OptionPairsStrategy
+from src.strategies.volatility_arb import VolatilityArbitrageStrategy
+from src.strategies.macro_arbitrage import MacroArbitrageStrategy
+from src.tools.build_macro_universe import load_macro_universe
 
 # --- Universe Definitions ---
 SECTOR_UNIVERSE = [
@@ -92,7 +92,7 @@ def create_sector_momentum_config(allocation=30000.0):
     """
     Generates a configuration dictionary for the Sector Momentum strategy.
     """
-    from strategies.sector_momentum import SectorMomentumStrategy
+    from src.strategies.sector_momentum import SectorMomentumStrategy
     
     strategy_id = "SectorMomentum_Monthly"
     
