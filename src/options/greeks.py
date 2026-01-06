@@ -176,14 +176,69 @@ class GreeksCalculator:
         ttm: float,
         vol: float,
         rate: Optional[float] = None,
+        *,
+        fast: bool = False,
+        max_points: Optional[int] = None,
     ) -> pd.DataFrame:
-        """Return price, delta and vega for a full series of underlying prices."""
+        """Return price and greeks across a price path.
+
+        When ``fast`` is enabled the method throttles Monte Carlo work by
+        down-sampling long series (``max_points``) and evaluating a reduced set
+        of finite-difference bumps.  This keeps bootstrap workflows responsive
+        while still providing accurate price/vega estimates for spread stats.
+        """
+
+        series = spots.astype(float)
+        if fast and max_points is not None and len(series) > max_points:
+            step = max(1, len(series) // max_points)
+            series = series.iloc[::step]
+
+        opt_type = self._normalize_type(option_type)
+        local_rate = self.rate if rate is None else rate
+        vol = max(vol, 1e-6)
+        params = self._resolve_params(vol)
+        base_seed = self.seed if self.seed is not None else np.random.SeedSequence().generate_state(1)[0]
+
+        records = []
+        if fast:
+            for idx, spot in enumerate(series):
+                seed = (base_seed + idx) if base_seed is not None else None
+                price = self._price(opt_type, float(spot), strike, ttm, local_rate, params, seed)
+
+                bump_pct = self.greek_bumps.get("spot", 0.01)
+                bump = max(bump_pct * float(spot), 1e-4)
+                up = self._price(opt_type, float(spot) + bump, strike, ttm, local_rate, params, seed)
+                down = self._price(opt_type, max(float(spot) - bump, 1e-4), strike, ttm, local_rate, params, seed)
+                delta = (up - down) / (2 * bump)
+                gamma = (up - 2 * price + down) / (bump ** 2)
+
+                vol_bump = self.greek_bumps.get("vol", 0.05)
+                vol_step = max(vol * vol_bump, 1e-5)
+                up_vol = vol + vol_step
+                down_vol = max(vol - vol_step, 1e-6)
+                up_params = self._resolve_params(up_vol)
+                down_params = self._resolve_params(down_vol)
+                up_vol_price = self._price(opt_type, float(spot), strike, ttm, local_rate, up_params, seed)
+                down_vol_price = self._price(opt_type, float(spot), strike, ttm, local_rate, down_params, seed)
+                vega = (up_vol_price - down_vol_price) / (up_vol - down_vol)
+
+                records.append(
+                    {
+                        "price": float(price),
+                        "delta": float(delta),
+                        "gamma": float(gamma),
+                        "vega": float(vega),
+                        "theta": 0.0,
+                        "rho": 0.0,
+                    }
+                )
+            return pd.DataFrame(records, index=series.index)
 
         values = [
-            self.metrics(option_type, float(spot), strike, ttm, vol, rate)
-            for spot in spots.astype(float)
+            self.metrics(opt_type, float(spot), strike, ttm, vol, local_rate)
+            for spot in series
         ]
-        return pd.DataFrame(values, index=spots.index)
+        return pd.DataFrame(values, index=series.index)
 
     def find_strike_for_delta(
         self,

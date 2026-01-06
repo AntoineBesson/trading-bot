@@ -472,8 +472,24 @@ class OptionPairsStrategy(BaseStrategy):
         strike_a = greeks.find_strike_for_delta(self.target_delta, self.option_type, float(prices[self.symbol_a].iloc[-1]), ttm, iv_a)
         strike_b = greeks.find_strike_for_delta(self.target_delta, self.option_type, float(prices[self.symbol_b].iloc[-1]), ttm, iv_b)
 
-        opt_a = greeks.price_series(self.option_type, prices[self.symbol_a], strike_a, ttm, iv_a)
-        opt_b = greeks.price_series(self.option_type, prices[self.symbol_b], strike_b, ttm, iv_b)
+        opt_a = greeks.price_series(
+            self.option_type,
+            prices[self.symbol_a],
+            strike_a,
+            ttm,
+            iv_a,
+            fast=True,
+            max_points=300,
+        )
+        opt_b = greeks.price_series(
+            self.option_type,
+            prices[self.symbol_b],
+            strike_b,
+            ttm,
+            iv_b,
+            fast=True,
+            max_points=300,
+        )
         df = pd.DataFrame(
             {
                 "price_a": opt_a["price"],
