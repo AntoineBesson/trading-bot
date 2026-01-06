@@ -1,4 +1,4 @@
-\documentclass[12pt,a4paper]{report}
+\documentclass[11pt,a4paper]{report}
 
 % --- Packages ---
 \usepackage[T1]{fontenc}
@@ -14,14 +14,18 @@
 \usepackage{graphicx}
 \usepackage{caption}
 \usepackage{subcaption}
+\usepackage{microtype}
 \usepackage{hyperref}
 \usepackage{enumitem}
 \usepackage{listings}
 \usepackage{xcolor}
+\usepackage[most]{tcolorbox}
 
 % --- Geometry & Layout ---
-\geometry{margin=1in}
-\onehalfspacing
+\geometry{margin=1.1in}
+\setstretch{1.2}
+\setlength{\parskip}{0.6em}
+\setlength{\parindent}{0pt}
 
 % --- Hyperref setup ---
 \hypersetup{
@@ -32,18 +36,48 @@
 }
 
 % --- Listings setup ---
-\lstset{
+    cbuselibrary{listings, skins, breakable, hooks}
+
+\definecolor{ListingBg}{HTML}{F5F7FA}
+\definecolor{ListingFrame}{HTML}{C0CCDA}
+
+\lstdefinestyle{codeblock}{
     basicstyle=\ttfamily\small,
-    keywordstyle=\color{blue},
-    commentstyle=\color{gray},
-    stringstyle=\color{teal},
+    keywordstyle=\color{blue!70!black},
+    commentstyle=\color{gray!70},
+    stringstyle=\color{teal!70!black},
     numbers=left,
-    numberstyle=\tiny, 
+    numberstyle=\scriptsize\color{gray!70},
     stepnumber=1,
-    numbersep=5pt,
-    frame=single,
+    numbersep=8pt,
+    showstringspaces=false,
     breaklines=true,
-    showstringspaces=false
+    tabsize=4,
+    keepspaces=true
+}
+
+\newtcblisting{prettylisting}[1][]{
+    enhanced,
+    colback=ListingBg,
+    colframe=ListingFrame,
+    boxrule=0.6pt,
+    arc=3pt,
+    left=6pt,
+    right=6pt,
+    top=6pt,
+    bottom=6pt,
+    listing only,
+    sharp corners=false,
+    breakable,
+    listing options={style=codeblock,#1}
+}
+
+\let\oldlstlisting\lstlisting
+\let\oldendlstlisting\endlstlisting
+\RenewDocumentEnvironment{lstlisting}{O{}}{
+    \prettylisting[#1]
+}{
+    \endprettylisting
 }
 
 % --- Custom commands ---
