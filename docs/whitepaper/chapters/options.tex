@@ -1,29 +1,40 @@
 \chapter{Option Strategies and Pricing Framework}
 
-Option-based modules rely on Black--Scholes analytics implemented in \texttt{src/options/greeks.py}. This chapter summarises the pricing equations, then details the option pair mean-reversion overlay and the volatility arbitrage (gamma scalping) system.
+Option-based modules now rely on a Heston stochastic volatility engine backed by a Longstaff--Schwartz Monte Carlo (LSM) solver (\texttt{src/options/greeks.py}). The previous Black--Scholes analytic stack could not value American-style contracts nor capture volatility smiles. This chapter summarises the migration to the Heston model, details the batching improvements that keep Monte Carlo practical inside the bot, and revisits the option pair and volatility arbitrage overlays.
 
-\section{Black--Scholes Metrics}
-For an underlying with spot $S$, strike $K$, risk-free rate $r$, volatility $\sigma$, and time-to-maturity $\tau$ (in years), the Black--Scholes price of a call ($C$) and put ($P$) is
+\section{From Black--Scholes to Heston}
+The legacy analytics assumed log-normal diffusion and relied on closed-form Greeks. For short-dated equity options the approximation was acceptable, but portfolio risk measurements broke down for early-exercise products and instruments with pronounced smiles/skews. The new engine models the joint dynamics
 \begin{align}
-C &= S\,\Phi(d_1) - K e^{-r\tau}\,\Phi(d_2), & P &= K e^{-r\tau}\,\Phi(-d_2) - S\,\Phi(-d_1),\\
-d_1 &= \frac{\ln(S/K) + (r + \tfrac{1}{2}\sigma^2)\tau}{\sigma\sqrt{\tau}}, & d_2 &= d_1 - \sigma\sqrt{\tau},
+\mathrm{d}S_t &= \mu S_t\,\mathrm{d}t + \sqrt{v_t} S_t\,\mathrm{d}W_t^{(1)},\\
+\mathrm{d}v_t &= \kappa(\theta - v_t)\,\mathrm{d}t + \sigma\sqrt{v_t}\,\mathrm{d}W_t^{(2)},\\
+\rho &= \mathrm{corr}\bigl(W_t^{(1)}, W_t^{(2)}\bigr),
 \end{align}
-where $\Phi(\cdot)$ denotes the standard normal CDF. Greeks follow the textbook definitions:
-\begin{align}
-\Delta &= \Phi(d_1) &&\text{(call)}, & \Gamma &= \frac{\phi(d_1)}{S\sigma\sqrt{\tau}},\\
-\Theta &= -\frac{S\phi(d_1)\sigma}{2\sqrt{\tau}} - r K e^{-r\tau}\Phi(d_2), & \Vega &= S\phi(d_1)\sqrt{\tau},
-\end{align}
-with $\phi$ the standard normal PDF. Listing~\ref{lst:greeks} shows the Python implementation used throughout the bot.
+where $v_t$ is the instantaneous variance. American prices are produced by simulating $N$ risk-neutral paths with Euler discretisation, then applying the LSM regression to estimate continuation values. Greeks are recovered by finite differences but, crucially, the Monte Carlo paths are reused across bumps to reduce estimator variance.
 
-\begin{lstlisting}[language=Python,firstnumber=38,label={lst:greeks},caption={Black--Scholes metric computation}]
-d1, d2 = self._d1_d2(spot, strike, ttm, vol, rate)
-if option_type == "c":
-    price = spot * norm.cdf(d1) - strike * exp(-rate * ttm) * norm.cdf(d2)
-    delta = norm.cdf(d1)
-else:
-    price = strike * exp(-rate * ttm) * norm.cdf(-d2) - spot * norm.cdf(-d1)
-    delta = norm.cdf(d1) - 1
-vega = spot * norm.pdf(d1) * sqrt(ttm)
+\subsection{Implementation Highlights}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Reusable path factors.} The pricer first generates unit-normalised spot paths $\tilde{S}^{(n)}_{t_j}$ under the Heston dynamics. Pricing a contract with spot $S_0$ simply scales these factors by $S_0$. Delta and gamma perturbations reuse the same path bundle, guaranteeing smooth finite differences.
+    \item \textbf{Batch pricing API.} The new \texttt{price\_series} helper down-samples long spot histories, evaluates a single path bundle per scenario, and shares it across all strike/volatility bumps. This keeps the bootstrap process for spread statistics below a few hundred milliseconds.
+    \item \textbf{Parameter overrides.} Strategy configurations may pin mean reversion ($\kappa$), long-run variance ($\theta$), or initial variance $v_0$ when calibrated surfaces are available. Otherwise they default to squaring the supplied implied volatility.
+\end{itemize}
+
+Listing~\ref{lst:heston-greeks} captures the core batching loop inside the greeks module.
+
+\begin{lstlisting}[language=Python,firstnumber=160,label={lst:heston-greeks},caption={Heston LSM batching in \texttt{GreeksCalculator}}]
+path_factors = self._generate_path_factors(ttm, rate, params, seed)
+price = self._price(opt_type, spot, strike, ttm, rate, params, seed, path_factors)
+
+bump = max(self.greek_bumps.get("spot", 0.01) * spot, 1e-4)
+up_price = self._price(opt_type, spot + bump, strike, ttm, rate, params, seed, path_factors)
+down_price = self._price(opt_type, max(spot - bump, 1e-4), strike, ttm, rate, params, seed, path_factors)
+delta = (up_price - down_price) / (2 * bump)
+
+vega_path_up = self._generate_path_factors(ttm, rate, up_params, seed)
+vega_path_dn = self._generate_path_factors(ttm, rate, dn_params, seed)
+vega = (
+    self._price(opt_type, spot, strike, ttm, rate, up_params, seed, vega_path_up)
+    - self._price(opt_type, spot, strike, ttm, rate, dn_params, seed, vega_path_dn)
+) / (up_vol - dn_vol)
 \end{lstlisting}
 
 \section{Option Pair Mean Reversion}
@@ -31,7 +42,7 @@ The \texttt{OptionPairsStrategy} extends equity pairs trading by operating on op
 \begin{equation}
 \Delta\bigl(S^i_t,K^i_t,\sigma^i_t,\tau\bigr) = \delta^*, \qquad i \in \{A,B\},
 \end{equation}
-where $\sigma^i_t$ is the historical volatility estimate returned by \texttt{OptionDataHandler}. The option spread is
+where $\sigma^i_t$ is the historical volatility estimate returned by \texttt{OptionDataHandler}. Delta here is the Monte Carlo finite difference described earlier, reusing the already simulated paths. The option spread is
 \begin{equation}
 Y_t = P^A_t - \kappa_t P^B_t,
 \end{equation}
@@ -40,6 +51,8 @@ with vega ratio $\kappa_t = \max(0.1, \Vega^A_t / \max(|\Vega^B_t|,10^{-6}))$ en
 Z_t = \frac{Y_t - \bar{Y}}{s_Y}.
 \end{equation}
 Trading rules choose between shorting expensive volatility (sell $P^A$, buy $\kappa_t$ contracts of $P^B$) or the inverse.
+
+\paragraph{Bootstrapping efficiency.} Historical spread statistics formerly required thousands of Black--Scholes evaluations. With the batchable Heston engine the bot simulates one path bundle per strike pair, dramatically reducing startup time while still capturing early-exercise optionality in the sampled distribution.
 
 \paragraph{Example.} Suppose $Y_t = 1.80$ dollars, $\bar{Y}=1.10$, $s_Y=0.40$, yielding $Z_t=1.75$ against thresholds $\theta_{\text{in}}=1.5$ and $\theta_{\text{out}}=0.0$. The strategy enters a short spread: sell one contract of $P^A$ and buy $\lceil \kappa_t \rceil$ contracts of $P^B$.
 
@@ -54,6 +67,6 @@ Implied volatility $\sigma_{\text{IV}}$ is extracted from option chains near 30 
 \end{equation}
 with default $\theta_{\text{IV}} = 1.25$. The strategy sells an at-the-money straddle (or iron condor variant) and delta-hedges dynamically: when the underlying delta drifts beyond $\pm \theta_\Delta$ (25 deltas by default), equity shares are traded to re-centre the position, capturing gamma scalping gains.
 
-\paragraph{Risk Controls.} Positions are closed on (i) premium decay hitting the profit target fraction $\pi$ (e.g., 50\%), or (ii) implied volatility expansion to $\theta_{\text{SL}}\,\sigma_{\text{IV,entry}}$ with $\theta_{\text{SL}}=1.3$.
+\paragraph{Risk Controls.} Positions are closed on (i) premium decay hitting the profit target fraction $\pi$ (e.g., 50\%), or (ii) implied volatility expansion to $\theta_{\text{SL}}\,\sigma_{\text{IV,entry}}$ with $\theta_{\text{SL}}=1.3$. The Heston engine provides more realistic vega and gamma for these stop checks, especially when the skew steepens during stress.
 
 \paragraph{Example.} Consider SPY options with $\sigma_{\text{IV}}=0.28$, $\widehat{\sigma}_{\text{RV}}=0.20$. The ratio 1.40 exceeds 1.25, prompting the sale of one straddle. If underlying delta drifts to $+32$ the bot sells $0.32$ delta-equivalent shares (rounded) to remain neutral.

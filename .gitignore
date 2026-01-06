@@ -24,6 +24,9 @@ config.ini
 !frontend/package.json
 !frontend/package-lock.json
 
+# option-pairs cache
+data/
+
 # Notebook checkpoints
 .ipynb_checkpoints/
 
