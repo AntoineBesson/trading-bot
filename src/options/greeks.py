@@ -1,45 +1,62 @@
 """Utility helpers for pricing and risk metrics of vanilla options.
 
-The :class:`GreeksCalculator` exposes a light-weight Black-Scholes
-implementation that powers both the option data handler and the option
-pairs strategy.  It intentionally supports scalar and small batch
-calculations so it can be used in notebooks and unit tests without the
-need for heavy infrastructure.
+The :class:`GreeksCalculator` now evaluates American-style contracts using
+an LSM Monte Carlo solver under the Heston stochastic volatility model.
+It exposes the same surface area as the legacy Black-Scholes helper so
+existing call sites can rely on the richer analytics without changes.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from math import exp, log, sqrt
-from typing import Dict, Iterable, Optional, Sequence
+from dataclasses import dataclass, field
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
 
-try:  # pragma: no cover - optional acceleration
-    from py_vollib_vectorized import (  # type: ignore
-        delta as vollib_delta,
-        gamma as vollib_gamma,
-        price as vollib_price,
-        rho as vollib_rho,
-        theta as vollib_theta,
-        vega as vollib_vega,
-    )
-
-    HAS_VOLLIB = True
-except Exception:  # pragma: no cover - fallback path
-    HAS_VOLLIB = False
+from .heston import HestonAmericanPricer, HestonParameters
 
 
 OptionMetrics = Dict[str, float]
 
 
 @dataclass
+class _PreparedInputs:
+    option_type: str
+    spot: float
+    strike: float
+    ttm: float
+    vol: float
+    rate: float
+    params: HestonParameters
+    seed: Optional[int]
+
+
+@dataclass
 class GreeksCalculator:
-    """Black-Scholes greeks with a friendly Python interface."""
+    """Heston-based American option metrics with a friendly interface."""
 
     rate: float = 0.01
+    heston_params: Optional[Dict[str, float]] = None
+    paths: int = 1200
+    steps: int = 64
+    seed: Optional[int] = 1234
+    antithetic: bool = True
+    greek_bumps: Dict[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        base = HestonParameters()
+        overrides = self.heston_params or {}
+        self._lock_theta = "theta" in overrides
+        self._lock_v0 = "v0" in overrides
+        self._base_params = HestonParameters(
+            kappa=overrides.get("kappa", base.kappa),
+            theta=overrides.get("theta", base.theta),
+            sigma=overrides.get("sigma", base.sigma),
+            rho=overrides.get("rho", base.rho),
+            v0=overrides.get("v0", base.v0),
+        )
+        self._base_params = self._base_params.clamp()
 
     def metrics(
         self,
@@ -52,26 +69,49 @@ class GreeksCalculator:
     ) -> OptionMetrics:
         """Return price and greeks for a single option contract."""
 
-        rate = self.rate if rate is None else rate
-        option_type = self._normalize_type(option_type)
-        if spot <= 0 or strike <= 0 or vol <= 0 or ttm <= 0:
+        prepared = self._prepare_inputs(option_type, spot, strike, ttm, vol, rate)
+        if prepared is None:
             return {"price": 0.0, "delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
 
-        d1, d2 = self._d1_d2(spot, strike, ttm, vol, rate)
-        if option_type == "c":
-            price = spot * norm.cdf(d1) - strike * exp(-rate * ttm) * norm.cdf(d2)
-            delta = norm.cdf(d1)
-            rho = strike * ttm * exp(-rate * ttm) * norm.cdf(d2)
-        else:
-            price = strike * exp(-rate * ttm) * norm.cdf(-d2) - spot * norm.cdf(-d1)
-            delta = norm.cdf(d1) - 1
-            rho = -strike * ttm * exp(-rate * ttm) * norm.cdf(-d2)
-
-        gamma = norm.pdf(d1) / (spot * vol * sqrt(ttm))
-        vega = spot * norm.pdf(d1) * sqrt(ttm)
-        theta = (
-            -spot * norm.pdf(d1) * vol / (2 * sqrt(ttm))
-            - rate * strike * exp(-rate * ttm) * (norm.cdf(d2) if option_type == "c" else norm.cdf(-d2))
+        price = self._price(prepared.option_type, prepared.spot, prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        delta, gamma = self._delta_gamma(
+            prepared.option_type,
+            prepared.spot,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
+            price,
+        )
+        vega = self._vega(
+            prepared.option_type,
+            prepared.spot,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.vol,
+            prepared.seed,
+            price,
+        )
+        theta = self._theta(
+            prepared.option_type,
+            prepared.spot,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
+            price,
+        )
+        rho = self._rho(
+            prepared.option_type,
+            prepared.spot,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
         )
 
         return {
@@ -84,10 +124,22 @@ class GreeksCalculator:
         }
 
     def price(self, option_type: str, spot: float, strike: float, ttm: float, vol: float, rate: Optional[float] = None) -> float:
-        return self.metrics(option_type, spot, strike, ttm, vol, rate)["price"]
+        prepared = self._prepare_inputs(option_type, spot, strike, ttm, vol, rate)
+        if prepared is None:
+            return 0.0
+        return self._price(prepared.option_type, prepared.spot, prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
 
     def delta(self, option_type: str, spot: float, strike: float, ttm: float, vol: float, rate: Optional[float] = None) -> float:
-        return self.metrics(option_type, spot, strike, ttm, vol, rate)["delta"]
+        prepared = self._prepare_inputs(option_type, spot, strike, ttm, vol, rate)
+        if prepared is None:
+            return 0.0
+        bump_pct = self.greek_bumps.get("spot", 0.01)
+        bump = max(bump_pct * prepared.spot, 1e-4)
+        if prepared.spot - bump <= 0:
+            bump = min(prepared.spot * 0.5, bump)
+        up = self._price(prepared.option_type, prepared.spot + bump, prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        down = self._price(prepared.option_type, max(prepared.spot - bump, 1e-4), prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        return (up - down) / (2 * bump)
 
     def vega(self, option_type: str, spot: float, strike: float, ttm: float, vol: float, rate: Optional[float] = None) -> float:
         return self.metrics(option_type, spot, strike, ttm, vol, rate)["vega"]
@@ -96,9 +148,8 @@ class GreeksCalculator:
         """Compute metrics for many options at once.
 
         The input DataFrame must contain ``option_type``, ``spot``, ``strike``,
-        ``ttm`` and ``vol`` columns.  ``py_vollib_vectorized`` is used when
-        installed, otherwise the method falls back to a slower but dependency
-        free loop, which is still manageable for notebook scale datasets.
+        ``ttm`` and ``vol`` columns.  The method runs a Monte Carlo solve per
+        row, so deliberate batching is recommended.
         """
 
         required = {"option_type", "spot", "strike", "ttm", "vol"}
@@ -108,20 +159,12 @@ class GreeksCalculator:
 
         df = options.copy().reset_index(drop=True)
         opt_types = df["option_type"].astype(str).str.lower().str[0]
-        if HAS_VOLLIB:
-            df["price"] = vollib_price(opt_types, df["spot"], df["strike"], df["ttm"], df["vol"], self.rate)
-            df["delta"] = vollib_delta(opt_types, df["spot"], df["strike"], df["ttm"], df["vol"], self.rate)
-            df["gamma"] = vollib_gamma(opt_types, df["spot"], df["strike"], df["ttm"], df["vol"], self.rate)
-            df["theta"] = vollib_theta(opt_types, df["spot"], df["strike"], df["ttm"], df["vol"], self.rate)
-            df["vega"] = vollib_vega(opt_types, df["spot"], df["strike"], df["ttm"], df["vol"], self.rate)
-            df["rho"] = vollib_rho(opt_types, df["spot"], df["strike"], df["ttm"], df["vol"], self.rate)
-        else:  # pragma: no cover - exercised indirectly
-            metrics: Sequence[OptionMetrics] = [
-                self.metrics(row.option_type, row.spot, row.strike, row.ttm, row.vol)
-                for row in df.itertuples(index=False)
-            ]
-            metric_frame = pd.DataFrame(metrics)
-            df[["price", "delta", "gamma", "theta", "vega", "rho"]] = metric_frame[["price", "delta", "gamma", "theta", "vega", "rho"]]
+        metrics = [
+            self.metrics(opt_types.iloc[idx], float(row.spot), float(row.strike), float(row.ttm), float(row.vol))
+            for idx, row in enumerate(df.itertuples(index=False))
+        ]
+        metric_frame = pd.DataFrame(metrics)
+        df[["price", "delta", "gamma", "theta", "vega", "rho"]] = metric_frame[["price", "delta", "gamma", "theta", "vega", "rho"]]
 
         return df
 
@@ -189,11 +232,130 @@ class GreeksCalculator:
                 f_low = f_mid
         return 0.5 * (low + high)
 
-    def _d1_d2(self, spot: float, strike: float, ttm: float, vol: float, rate: float) -> Sequence[float]:
-        denom = vol * sqrt(ttm)
-        d1 = (log(spot / strike) + (rate + 0.5 * vol ** 2) * ttm) / denom
-        d2 = d1 - denom
-        return d1, d2
+    def _price(
+        self,
+        option_type: str,
+        spot: float,
+        strike: float,
+        ttm: float,
+        rate: float,
+        params: HestonParameters,
+        seed: Optional[int],
+    ) -> float:
+        pricer = HestonAmericanPricer(paths=self.paths, steps=self.steps, seed=seed, antithetic=self.antithetic)
+        return pricer.price(option_type, spot, strike, ttm, rate, params)
+
+    def _delta_gamma(
+        self,
+        option_type: str,
+        spot: float,
+        strike: float,
+        ttm: float,
+        rate: float,
+        params: HestonParameters,
+        seed: Optional[int],
+        base_price: float,
+    ) -> tuple[float, float]:
+        bump_pct = self.greek_bumps.get("spot", 0.01)
+        bump = max(bump_pct * spot, 1e-4)
+        if spot - bump <= 0:
+            bump = min(spot * 0.5, bump)
+        up = self._price(option_type, spot + bump, strike, ttm, rate, params, seed)
+        down = self._price(option_type, max(spot - bump, 1e-4), strike, ttm, rate, params, seed)
+        delta = (up - down) / (2 * bump)
+        gamma = (up - 2 * base_price + down) / (bump ** 2)
+        return delta, gamma
+
+    def _vega(
+        self,
+        option_type: str,
+        spot: float,
+        strike: float,
+        ttm: float,
+        rate: float,
+        vol: float,
+        seed: Optional[int],
+        base_price: float,
+    ) -> float:
+        bump_pct = self.greek_bumps.get("vol", 0.05)
+        bump = max(bump_pct * vol, 1e-5)
+        up_vol = vol + bump
+        down_vol = max(vol - bump, 1e-6)
+        up_params = self._resolve_params(up_vol)
+        down_params = self._resolve_params(down_vol)
+        up = self._price(option_type, spot, strike, ttm, rate, up_params, seed)
+        down = self._price(option_type, spot, strike, ttm, rate, down_params, seed)
+        return (up - down) / (up_vol - down_vol)
+
+    def _theta(
+        self,
+        option_type: str,
+        spot: float,
+        strike: float,
+        ttm: float,
+        rate: float,
+        params: HestonParameters,
+        seed: Optional[int],
+        base_price: float,
+    ) -> float:
+        bump = self.greek_bumps.get("time", 1.0 / 365)
+        bump = min(bump, 0.25 * ttm)
+        if bump <= 0:
+            return 0.0
+        up = self._price(option_type, spot, strike, ttm + bump, rate, params, seed)
+        if ttm - bump <= 1e-6:
+            return (up - base_price) / bump
+        else:
+            down_price = self._price(option_type, spot, strike, ttm - bump, rate, params, seed)
+        return (up - down_price) / (2 * bump)
+
+    def _rho(
+        self,
+        option_type: str,
+        spot: float,
+        strike: float,
+        ttm: float,
+        rate: float,
+        params: HestonParameters,
+        seed: Optional[int],
+    ) -> float:
+        bump = self.greek_bumps.get("rate", 1e-4)
+        up = self._price(option_type, spot, strike, ttm, rate + bump, params, seed)
+        down = self._price(option_type, spot, strike, ttm, rate - bump, params, seed)
+        return (up - down) / (2 * bump)
+
+    def _resolve_params(self, vol: float) -> HestonParameters:
+        base = HestonParameters(
+            kappa=self._base_params.kappa,
+            theta=self._base_params.theta,
+            sigma=self._base_params.sigma,
+            rho=self._base_params.rho,
+            v0=self._base_params.v0,
+        )
+        if not self._lock_theta:
+            implied = max(vol ** 2, 1e-8)
+            base.theta = implied
+        if not self._lock_v0:
+            base.v0 = max(vol ** 2, 1e-8)
+        return base.clamp()
+
+    def _prepare_inputs(
+        self,
+        option_type: str,
+        spot: float,
+        strike: float,
+        ttm: float,
+        vol: float,
+        rate: Optional[float],
+    ) -> Optional[_PreparedInputs]:
+        local_rate = self.rate if rate is None else rate
+        opt_type = self._normalize_type(option_type)
+        if spot <= 0 or strike <= 0 or vol <= 0 or ttm <= 0:
+            return None
+        vol = max(vol, 1e-6)
+        params = self._resolve_params(vol)
+        seed = self.seed if self.seed is not None else np.random.SeedSequence().generate_state(1)[0]
+        return _PreparedInputs(opt_type, float(spot), float(strike), float(ttm), vol, float(local_rate), params, seed)
 
     @staticmethod
     def _normalize_type(option_type: str) -> str:
