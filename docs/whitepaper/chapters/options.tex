@@ -1,0 +1,59 @@
+\chapter{Option Strategies and Pricing Framework}
+
+Option-based modules rely on Black--Scholes analytics implemented in \texttt{src/options/greeks.py}. This chapter summarises the pricing equations, then details the option pair mean-reversion overlay and the volatility arbitrage (gamma scalping) system.
+
+\section{Black--Scholes Metrics}
+For an underlying with spot $S$, strike $K$, risk-free rate $r$, volatility $\sigma$, and time-to-maturity $\tau$ (in years), the Black--Scholes price of a call ($C$) and put ($P$) is
+\begin{align}
+C &= S\,\Phi(d_1) - K e^{-r\tau}\,\Phi(d_2), & P &= K e^{-r\tau}\,\Phi(-d_2) - S\,\Phi(-d_1),\\
+d_1 &= \frac{\ln(S/K) + (r + \tfrac{1}{2}\sigma^2)\tau}{\sigma\sqrt{\tau}}, & d_2 &= d_1 - \sigma\sqrt{\tau},
+\end{align}
+where $\Phi(\cdot)$ denotes the standard normal CDF. Greeks follow the textbook definitions:
+\begin{align}
+\Delta &= \Phi(d_1) &&\text{(call)}, & \Gamma &= \frac{\phi(d_1)}{S\sigma\sqrt{\tau}},\\
+\Theta &= -\frac{S\phi(d_1)\sigma}{2\sqrt{\tau}} - r K e^{-r\tau}\Phi(d_2), & \Vega &= S\phi(d_1)\sqrt{\tau},
+\end{align}
+with $\phi$ the standard normal PDF. Listing~\ref{lst:greeks} shows the Python implementation used throughout the bot.
+
+\begin{lstlisting}[language=Python,firstnumber=38,label={lst:greeks},caption={Black--Scholes metric computation}]
+d1, d2 = self._d1_d2(spot, strike, ttm, vol, rate)
+if option_type == "c":
+    price = spot * norm.cdf(d1) - strike * exp(-rate * ttm) * norm.cdf(d2)
+    delta = norm.cdf(d1)
+else:
+    price = strike * exp(-rate * ttm) * norm.cdf(-d2) - spot * norm.cdf(-d1)
+    delta = norm.cdf(d1) - 1
+vega = spot * norm.pdf(d1) * sqrt(ttm)
+\end{lstlisting}
+
+\section{Option Pair Mean Reversion}
+The \texttt{OptionPairsStrategy} extends equity pairs trading by operating on option premiums. For symbols $S^A$ and $S^B$, at-the-money options with target delta $\delta^*$ are selected by solving
+\begin{equation}
+\Delta\bigl(S^i_t,K^i_t,\sigma^i_t,\tau\bigr) = \delta^*, \qquad i \in \{A,B\},
+\end{equation}
+where $\sigma^i_t$ is the historical volatility estimate returned by \texttt{OptionDataHandler}. The option spread is
+\begin{equation}
+Y_t = P^A_t - \kappa_t P^B_t,
+\end{equation}
+with vega ratio $\kappa_t = \max(0.1, \Vega^A_t / \max(|\Vega^B_t|,10^{-6}))$ enforcing vega-neutral hedging. Z-score evaluation mirrors the equity variant:
+\begin{equation}
+Z_t = \frac{Y_t - \bar{Y}}{s_Y}.
+\end{equation}
+Trading rules choose between shorting expensive volatility (sell $P^A$, buy $\kappa_t$ contracts of $P^B$) or the inverse.
+
+\paragraph{Example.} Suppose $Y_t = 1.80$ dollars, $\bar{Y}=1.10$, $s_Y=0.40$, yielding $Z_t=1.75$ against thresholds $\theta_{\text{in}}=1.5$ and $\theta_{\text{out}}=0.0$. The strategy enters a short spread: sell one contract of $P^A$ and buy $\lceil \kappa_t \rceil$ contracts of $P^B$.
+
+\section{Volatility Arbitrage (Gamma Scalping)}
+The \texttt{VolatilityArbitrageStrategy} targets the variance risk premium by shorting implied volatility when its ratio to realised volatility exceeds a threshold. Realised volatility is measured via the Parkinson estimator on high--low ranges:
+\begin{equation}
+\widehat{\sigma}_{\text{RV}} = \sqrt{\frac{1}{4n\ln 2} \sum_{u=1}^{n} \ln^2\!\left(\frac{H_u}{L_u}\right)} \times \sqrt{252}.
+\end{equation}
+Implied volatility $\sigma_{\text{IV}}$ is extracted from option chains near 30 days to expiry. The entry condition is
+\begin{equation}
+\frac{\sigma_{\text{IV}}}{\widehat{\sigma}_{\text{RV}}} > \theta_{\text{IV}},
+\end{equation}
+with default $\theta_{\text{IV}} = 1.25$. The strategy sells an at-the-money straddle (or iron condor variant) and delta-hedges dynamically: when the underlying delta drifts beyond $\pm \theta_\Delta$ (25 deltas by default), equity shares are traded to re-centre the position, capturing gamma scalping gains.
+
+\paragraph{Risk Controls.} Positions are closed on (i) premium decay hitting the profit target fraction $\pi$ (e.g., 50\%), or (ii) implied volatility expansion to $\theta_{\text{SL}}\,\sigma_{\text{IV,entry}}$ with $\theta_{\text{SL}}=1.3$.
+
+\paragraph{Example.} Consider SPY options with $\sigma_{\text{IV}}=0.28$, $\widehat{\sigma}_{\text{RV}}=0.20$. The ratio 1.40 exceeds 1.25, prompting the sale of one straddle. If underlying delta drifts to $+32$ the bot sells $0.32$ delta-equivalent shares (rounded) to remain neutral.

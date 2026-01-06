@@ -1,0 +1,24 @@
+\chapter{Risk and Performance Metrics}
+
+This chapter consolidates the statistical outputs produced by backtests and validation utilities to characterise strategy performance.
+
+\section{Return Distributions}
+Given per-period returns $R_t$, the bot records mean $\bar{R}$, variance $\Var(R)$, skewness, and kurtosis for diagnostic plots. Confidence intervals for the mean assume approximately normal sampling error with standard error $\hat{\sigma}_R / \sqrt{n}$.
+
+\section{Risk of Ruin}
+Monte Carlo projections estimate the probability of drawdowns exceeding preset thresholds (e.g., 50\%). For threshold $\rho$ and simulated terminal equities $E_T^{(s)}$, risk of ruin is
+\begin{equation}
+\text{RoR}(\rho) = \frac{1}{S} \sum_{s=1}^{S} \1\{E_T^{(s)} < (1-\rho)E_0\}.
+\end{equation}
+
+\section{Drawdown Analytics}
+Equity curves $E_t$ yield maximum drawdown as defined in Chapter~\ref{chap:backtesting}. The duration of drawdowns is also tracked, computed as consecutive streaks where $E_t$ stays below its running maximum.
+
+\section{Benchmarking}
+For strategies with reference indices (e.g., the pairs module against SPY) excess return $\alpha$ and information ratio (IR) are reported:
+\begin{equation}
+\alpha = R_{\text{strat}} - R_{\text{bench}}, \qquad \text{IR} = \frac{\alpha}{\sigma_{\alpha}}.
+\end{equation}
+
+\section{Capital Utilisation}
+The \texttt{PortfolioManager} maintains utilisation ratios $U_k = E_k / (A_k L_k)$ per strategy $k$, enabling dashboard alerts when utilisation breaches tolerance levels (typically 80\%).

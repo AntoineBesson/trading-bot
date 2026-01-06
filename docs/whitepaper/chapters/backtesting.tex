@@ -1,0 +1,39 @@
+\chapter{Backtesting Framework}
+\label{chap:backtesting}
+
+Historical simulations evaluate each strategy on aligned price series obtained from the \texttt{DataHandler}. This chapter summarises the mechanics common across \texttt{run\_backtest} implementations.
+
+\section{Data Alignment and Rolling Windows}
+For multi-asset strategies a merged dataframe $\mathbf{P}$ is built by left-joining individual close series and dropping rows with missing values. Rolling statistics use window length $w$ derived from the requested timeframe $\Delta t$ and lookback days $D$:
+\begin{equation}
+w = \max\!\left(10, \left\lfloor \frac{D \times 1440}{\text{minutes}(\Delta t)} \right\rfloor \right).
+\end{equation}
+
+\section{Equity Pairs Simulation}
+The pairs backtest iterates chronologically, recomputing the spread and z-score per bar, entering and exiting positions with transaction size $q$. Realised P\&L per completed trade $j$ is
+\begin{equation}
+\Pi_j = q (P^A_{\text{exit}} - P^A_{\text{entry}}) - q\hat{\beta}(P^B_{\text{exit}} - P^B_{\text{entry}}).
+\end{equation}
+Cumulative equity $E_t$ evolves via
+\begin{equation}
+E_{t+1} = E_t + \Pi_t.
+\end{equation}
+Listing~\ref{lst:pairs_backtest} abridges the reporting logic from \texttt{src/strategies/pairs\_trade.py}.
+
+\begin{lstlisting}[language=Python,firstnumber=189,label={lst:pairs_backtest},caption={Pairs backtest metrics gathering}]
+prices['spread'] = prices[self.symbol_a] - self.hedge_ratio * prices[self.symbol_b]
+prices['spread_mean'] = prices['spread'].rolling(window=window).mean()
+prices['spread_std'] = prices['spread'].rolling(window=window).std(ddof=0)
+prices['z_score'] = (prices['spread'] - prices['spread_mean']) / prices['spread_std']
+\end{lstlisting}
+
+\section{Option Spread Simulation}
+The option pairs backtest reconstructs synthetic option prices using the Black--Scholes greeks and estimated volatility series. After generating the spread $Y_t$ and vega ratio, returns are computed as percentage moves of the option legs, which feed into cumulative equity with contract notional $\mathcal{N}$.
+
+\section{Performance Metrics}
+Across strategies the following statistics are reported:
+\begin{align}
+\text{Total P\&L} &= \sum_j \Pi_j, & \text{Win Rate} &= \frac{\#\{\Pi_j > 0\}}{\#\{j\}},\\
+\text{Sharpe} &= \frac{\E[R]}{\sigma_R} \sqrt{\text{PeriodsPerYear}}, & \text{Max Drawdown} &= \max_t \left(1 - \frac{E_t}{\max_{u \leq t} E_u}\right).
+\end{align}
+Benchmarked strategies also track excess return relative to a reference index.

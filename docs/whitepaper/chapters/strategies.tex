@@ -1,0 +1,81 @@
+\chapter{Equity Strategies}
+
+This chapter formalises the equity-driven strategies implemented in \texttt{src/strategies}. Each subsection states the signal equations, execution logic, and representative parameter choices drawn from the production configuration.
+
+\section{Cointegrated Pairs Mean Reversion}
+The \texttt{PairsTradeStrategy} maintains a market-neutral spread between equities $S^A_t$ and $S^B_t$ with hedge ratio $\hat{\beta}$ computed offline. The spread process is
+\begin{equation}
+X_t = S^A_t - \hat{\beta} S^B_t.
+\end{equation}
+Assuming $(S^A_t, S^B_t)$ are cointegrated, $X_t$ is stationary with mean $\mu$ and standard deviation $\sigma$. Online statistics are re-estimated over a rolling window $\mathcal{W}$ via
+\begin{equation}
+\hat{\mu}_t = \frac{1}{|\mathcal{W}|} \sum_{u \in \mathcal{W}} X_u, \quad
+\hat{\sigma}_t = \sqrt{\frac{1}{|\mathcal{W}|} \sum_{u \in \mathcal{W}} (X_u - \hat{\mu}_t)^2}.
+\end{equation}
+A z-score normalisation triggers trades:
+\begin{equation}
+Z_t = \frac{X_t - \hat{\mu}_t}{\hat{\sigma}_t}.
+\end{equation}
+With entry threshold $\theta_{\text{in}}$ and exit threshold $\theta_{\text{out}}$, orders follow
+\begin{align*}
+Z_t \geq \theta_{\text{in}} &\Rightarrow \text{short spread (sell $S^A$, buy $\hat{\beta}$ shares of $S^B$)},\\
+Z_t \leq -\theta_{\text{in}} &\Rightarrow \text{long spread (buy $S^A$, sell $\hat{\beta}$ shares of $S^B$)},\\
+|Z_t| \leq \theta_{\text{out}} &\Rightarrow \text{close outstanding position}.
+\end{align*}
+
+\paragraph{Example.} For symbols ``GS'' and ``MS'' with $\hat{\beta}=0.84$, $\theta_{\text{in}}=1.25$, $\theta_{\text{out}}=0.25$, and position size $q=10$, observing $Z_t=1.40$ generates orders $(-q, +q\hat{\beta}) = (-10, +8)$.
+
+\paragraph{Implementation.} Listing~\ref{lst:pairs_zscore} shows the core computation in \texttt{src/strategies/pairs\_trade.py}.
+\begin{lstlisting}[language=Python,firstnumber=340,label={lst:pairs_zscore},caption={Z-score evaluation in PairsTradeStrategy}]
+spread = price_a - self.hedge_ratio * price_b
+z_score = (spread - self.spread_mean) / self.spread_std
+signals = self._evaluate_rules(z_score)
+\end{lstlisting}
+
+\section{Donchian Channel Breakout}
+The \texttt{DonchianBreakoutStrategy} trades momentum breakouts using the Donchian envelope defined by the rolling extrema of closing prices $C_t$ over lookback $n$:
+\begin{equation}
+U_t = \max_{u \in [t-n, t-1]} C_u, \qquad L_t = \min_{u \in [t-n, t-1]} C_u.
+\end{equation}
+Signals are
+\begin{align*}
+C_t > U_t &\Rightarrow \text{enter long},\\
+C_t < L_t &\Rightarrow \text{enter short},\\
+\text{otherwise} &\Rightarrow \text{hold position}.
+\end{align*}
+Positions persist until a counter-signal occurs.
+
+\paragraph{Example.} With $n=20$ and quantity $q=10$, if $C_t$ closes 1.2\% above $U_t$, the strategy buys $q$ shares; a drop below $L_t$ later flips to a short.
+
+\paragraph{Implementation.} The vectorised backtest (Listing~\ref{lst:donchian}) multiplies the signalled stance with forward returns to obtain trade-level performance for validation routines.
+\begin{lstlisting}[language=Python,firstnumber=87,label={lst:donchian},caption={Vectorised Donchian backtest kernel}]
+upper = df['close'].rolling(lookback).max().shift(1)
+lower = df['close'].rolling(lookback).min().shift(1)
+signals[df['close'] > upper] = 1
+signals[df['close'] < lower] = -1
+strategy_returns = signals * market_returns
+\end{lstlisting}
+
+\section{Macro Lead--Lag Arbitrage}
+The \texttt{MacroArbitrageStrategy} exploits delayed transmission from a leader asset $L$ to a laggard $G$. Over a lookback window of $m$ minutes the leader return is
+\begin{equation}
+R^{L}_{t,m} = \frac{P^L_t}{P^L_{t-m}} - 1,
+\end{equation}
+while the laggard move is constrained by $|R^{G}_{t,m}| < \delta$ to ensure it has not reacted. A z-score computed on the leader--laggard spread,
+\begin{equation}
+Z_t = \frac{R^{L}_{t,m} - \E[R^{L}_{t,m}]}{\sqrt{\Var(R^{L}_{t,m})}},
+\end{equation}
+triggers trades when $|Z_t| > \theta$. Qualifying signals are filtered by natural language sentiment scores $\sigma_t$ derived from partner news feeds to suppress idiosyncratic jumps.
+
+\paragraph{Execution.} Upon a positive shock in the leader ($Z_t>\theta$), the bot shorts the leader and buys the laggard, sized to equal dollar exposure. Positions are held for $h$ minutes (default $h=120$) or until the spread normalises.
+
+\section{Sector Momentum Rotation}
+The \texttt{SectorMomentumStrategy} implements monthly relative-strength rotation among the SPDR sector universe $\mathcal{U}$. For each candidate $s \in \mathcal{U}$ the six-month momentum score is
+\begin{equation}
+M_s = \frac{C_s^{(t)}}{C_s^{(t-126)}} - 1.
+\end{equation}
+The top $N$ sectors by $M_s$ are retained, subject to a regime filter that requires the closing price to exceed its 200-day simple moving average ($C^{(t)}_s > \text{SMA}_{200,s}(t)$). Assets failing the filter are replaced with the defensive Treasury ETF $D$.
+
+\paragraph{Allocation.} Capital $A$ is split equally across the final basket $\mathcal{B}$, yielding target weights $w_s = 1/|\mathcal{B}|$. The rebalance transacts $\Delta q_s = (w_s A / C_s^{(t)}) - q_s^{\text{prev}}$ shares.
+
+\paragraph{Example.} If the top momentum names are XLK, XLY, and XLF, but XLY trades below its SMA$_{200}$, the portfolio holds \{XLK, SHV, XLF\} with one-third allocation each.

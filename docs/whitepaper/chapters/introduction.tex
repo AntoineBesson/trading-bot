@@ -1,0 +1,19 @@
+\chapter{Introduction}
+
+This document presents a quantitative specification of the multi-strategy trading bot implemented in the repository. The focus is on the mathematical foundations of each strategy, the statistical validation procedures, and the risk management metrics that underpin production deployment. Frontend considerations are intentionally excluded.
+
+\section{Scope}
+The bot combines equity and options-based signals across multiple horizons:
+\begin{itemize}[noitemsep]
+    \item Market-neutral mean reversion on cointegrated equities and their option overlays.
+    \item Trend-following breakouts via Donchian channels.
+    \item A macro lead--lag framework that exploits cross-asset propagation delays.
+    \item Volatility arbitrage through option Greeks and variance risk premia.
+    \item A sector rotation model grounded in relative momentum and regime filters.
+\end{itemize}
+
+\section{Data Sources and Assumptions}
+Market data is fetched through the \texttt{DataHandler} abstraction, which exposes historical bars and latest quotes. Unless otherwise specified, prices refer to adjusted closing levels. Options data is enriched with implied volatility and Greeks using a Black--Scholes evaluator. All monetary values are in USD.
+
+\section{Notation Overview}
+Mathematical symbols follow the conventions summarised in Appendix~\ref{chap:notation}. Random variables are uppercase (e.g., $S_t$ for the underlying price), realised observations are lowercase, and estimated parameters include hats (e.g., $\hat{\sigma}$).

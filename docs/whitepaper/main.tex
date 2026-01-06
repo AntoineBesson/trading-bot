@@ -1,0 +1,76 @@
+\documentclass[12pt,a4paper]{report}
+
+% --- Packages ---
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{mathtools}
+\usepackage{physics}
+\usepackage{siunitx}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{xcolor}
+
+% --- Geometry & Layout ---
+\geometry{margin=1in}
+\onehalfspacing
+
+% --- Hyperref setup ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+% --- Listings setup ---
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{teal},
+    numbers=left,
+    numberstyle=\tiny, 
+    stepnumber=1,
+    numbersep=5pt,
+    frame=single,
+    breaklines=true,
+    showstringspaces=false
+}
+
+% --- Custom commands ---
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\1}{\mathbb{1}}
+
+\title{Quantitative Specification of the Multi-Strategy Trading Bot}
+\author{}
+\date{January 2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\include{chapters/introduction}
+\include{chapters/architecture}
+\include{chapters/strategies}
+\include{chapters/options}
+\include{chapters/backtesting}
+\include{chapters/validation}
+\include{chapters/metrics}
+
+\appendix
+\include{chapters/appendix_notation}
+
+\end{document}
