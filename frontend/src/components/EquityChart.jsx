@@ -12,18 +12,37 @@ const EquityChart = ({ data }) => {
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#1f2937' },
-        textColor: '#d1d5db',
+        background: { type: ColorType.Solid, color: '#141414' },
+        textColor: '#a3a3a3',
       },
       grid: {
-        vertLines: { color: '#374151' },
-        horzLines: { color: '#374151' },
+        vertLines: { color: '#262626' },
+        horzLines: { color: '#262626' },
       },
       width: chartContainerRef.current.clientWidth,
-      height: 300,
+      height: 350,
       timeScale: {
         timeVisible: true,
         secondsVisible: false,
+        borderColor: '#262626',
+      },
+      rightPriceScale: {
+        borderColor: '#262626',
+      },
+      crosshair: {
+        mode: 1,
+        vertLine: {
+          color: '#404040',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#1f1f1f',
+        },
+        horzLine: {
+          color: '#404040',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#1f1f1f',
+        },
       },
     });
 
@@ -33,11 +52,15 @@ const EquityChart = ({ data }) => {
         if (typeof chart.addAreaSeries === 'function') {
             newSeries = chart.addAreaSeries({
                 lineColor: '#22c55e',
-                topColor: '#22c55e',
-                bottomColor: 'rgba(34, 197, 94, 0.1)',
+                topColor: 'rgba(34, 197, 94, 0.3)',
+                bottomColor: 'rgba(34, 197, 94, 0.02)',
+                lineWidth: 2,
             });
         } else {
-            newSeries = chart.addLineSeries({ color: '#22c55e' });
+            newSeries = chart.addLineSeries({ 
+              color: '#22c55e',
+              lineWidth: 2,
+            });
         }
     } catch (err) {
         console.error("Error creating series:", err);
@@ -89,10 +112,7 @@ const EquityChart = ({ data }) => {
   }, [data]);
 
   return (
-    <div className="bg-gray-800 p-5 rounded-xl border border-gray-700 shadow-lg w-full max-w-5xl mt-6">
-      <h2 className="text-xl font-bold mb-4 text-gray-200">Portfolio Performance</h2>
-      <div ref={chartContainerRef} className="w-full" style={{ height: '300px' }} />
-    </div>
+    <div ref={chartContainerRef} className="w-full rounded-lg overflow-hidden" style={{ height: '350px' }} />
   );
 };
 

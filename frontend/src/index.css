@@ -1,3 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-primary font-sans antialiased;
+  }
+  
+  ::-webkit-scrollbar {
+    @apply w-2;
+  }
+  
+  ::-webkit-scrollbar-track {
+    @apply bg-surface;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-light rounded-full;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-secondary;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface border border-border rounded-xl p-6;
+  }
+  
+  .card-hover {
+    @apply card transition-all duration-200 hover:border-border-light hover:bg-surface-light;
+  }
+  
+  .stat-value {
+    @apply text-3xl font-semibold tracking-tight;
+  }
+  
+  .stat-label {
+    @apply text-sm text-secondary uppercase tracking-wider;
+  }
+  
+  .nav-link {
+    @apply flex items-center gap-3 px-4 py-3 rounded-lg text-secondary transition-all duration-200;
+  }
+  
+  .nav-link:hover {
+    @apply bg-surface-light text-primary;
+  }
+  
+  .nav-link.active {
+    @apply bg-surface-light text-primary border-l-2 border-primary;
+  }
+  
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+  }
+  
+  .btn-primary {
+    @apply btn bg-primary text-background hover:bg-secondary;
+  }
+  
+  .btn-outline {
+    @apply btn border border-border text-primary hover:bg-surface-light;
+  }
+  
+  .btn-danger {
+    @apply btn bg-chart-red text-white hover:bg-red-600;
+  }
+  
+  .btn-success {
+    @apply btn bg-chart-green text-white hover:bg-green-600;
+  }
+}
