@@ -44,6 +44,8 @@ class HestonAmericanPricer:
         ttm: float,
         rate: float,
         params: HestonParameters,
+        *,
+        path_factors: Optional[Array] = None,
     ) -> float:
         opt_type = option_type.lower().strip()[0]
         if opt_type not in {"c", "p"}:
@@ -52,10 +54,30 @@ class HestonAmericanPricer:
             return 0.0
 
         pricer_params = params.clamp()
-        rng = np.random.default_rng(self.seed)
         paths = self.paths * (2 if self.antithetic else 1)
-        spot_paths, var_paths = self._simulate_paths(spot, ttm, rate, pricer_params, paths, rng)
+
+        if path_factors is None:
+            rng = np.random.default_rng(self.seed)
+            spot_paths, _ = self._simulate_paths(spot, ttm, rate, pricer_params, paths, rng)
+        else:
+            if path_factors.shape[1] != self.steps + 1:
+                raise ValueError("path_factors has incompatible number of steps")
+            spot_paths = path_factors * float(spot)
+
         return float(self._lsm(opt_type, strike, rate, ttm, spot_paths))
+
+    def generate_path_factors(
+        self,
+        ttm: float,
+        rate: float,
+        params: HestonParameters,
+        seed: Optional[int],
+    ) -> Array:
+        pricer_params = params.clamp()
+        rng = np.random.default_rng(seed)
+        paths = self.paths * (2 if self.antithetic else 1)
+        spot_paths, _ = self._simulate_paths(1.0, ttm, rate, pricer_params, paths, rng)
+        return spot_paths
 
     def _simulate_paths(
         self,

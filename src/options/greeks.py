@@ -73,7 +73,17 @@ class GreeksCalculator:
         if prepared is None:
             return {"price": 0.0, "delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0}
 
-        price = self._price(prepared.option_type, prepared.spot, prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        path_factors = self._generate_path_factors(prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        price = self._price(
+            prepared.option_type,
+            prepared.spot,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
+            path_factors,
+        )
         delta, gamma = self._delta_gamma(
             prepared.option_type,
             prepared.spot,
@@ -83,6 +93,7 @@ class GreeksCalculator:
             prepared.params,
             prepared.seed,
             price,
+            path_factors,
         )
         vega = self._vega(
             prepared.option_type,
@@ -127,7 +138,17 @@ class GreeksCalculator:
         prepared = self._prepare_inputs(option_type, spot, strike, ttm, vol, rate)
         if prepared is None:
             return 0.0
-        return self._price(prepared.option_type, prepared.spot, prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        path_factors = self._generate_path_factors(prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        return self._price(
+            prepared.option_type,
+            prepared.spot,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
+            path_factors,
+        )
 
     def delta(self, option_type: str, spot: float, strike: float, ttm: float, vol: float, rate: Optional[float] = None) -> float:
         prepared = self._prepare_inputs(option_type, spot, strike, ttm, vol, rate)
@@ -137,8 +158,27 @@ class GreeksCalculator:
         bump = max(bump_pct * prepared.spot, 1e-4)
         if prepared.spot - bump <= 0:
             bump = min(prepared.spot * 0.5, bump)
-        up = self._price(prepared.option_type, prepared.spot + bump, prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
-        down = self._price(prepared.option_type, max(prepared.spot - bump, 1e-4), prepared.strike, prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        path_factors = self._generate_path_factors(prepared.ttm, prepared.rate, prepared.params, prepared.seed)
+        up = self._price(
+            prepared.option_type,
+            prepared.spot + bump,
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
+            path_factors,
+        )
+        down = self._price(
+            prepared.option_type,
+            max(prepared.spot - bump, 1e-4),
+            prepared.strike,
+            prepared.ttm,
+            prepared.rate,
+            prepared.params,
+            prepared.seed,
+            path_factors,
+        )
         return (up - down) / (2 * bump)
 
     def vega(self, option_type: str, spot: float, strike: float, ttm: float, vol: float, rate: Optional[float] = None) -> float:
@@ -201,25 +241,27 @@ class GreeksCalculator:
 
         records = []
         if fast:
-            for idx, spot in enumerate(series):
-                seed = (base_seed + idx) if base_seed is not None else None
-                price = self._price(opt_type, float(spot), strike, ttm, local_rate, params, seed)
+            path_factors = self._generate_path_factors(ttm, local_rate, params, base_seed)
+            vol_bump = self.greek_bumps.get("vol", 0.05)
+            vol_step = max(vol * vol_bump, 1e-5)
+            up_vol = vol + vol_step
+            down_vol = max(vol - vol_step, 1e-6)
+            up_params = self._resolve_params(up_vol)
+            down_params = self._resolve_params(down_vol)
+            up_path = self._generate_path_factors(ttm, local_rate, up_params, base_seed)
+            down_path = self._generate_path_factors(ttm, local_rate, down_params, base_seed)
+            for spot in series:
+                price = self._price(opt_type, float(spot), strike, ttm, local_rate, params, base_seed, path_factors)
 
                 bump_pct = self.greek_bumps.get("spot", 0.01)
                 bump = max(bump_pct * float(spot), 1e-4)
-                up = self._price(opt_type, float(spot) + bump, strike, ttm, local_rate, params, seed)
-                down = self._price(opt_type, max(float(spot) - bump, 1e-4), strike, ttm, local_rate, params, seed)
-                delta = (up - down) / (2 * bump)
-                gamma = (up - 2 * price + down) / (bump ** 2)
+                up_price = self._price(opt_type, float(spot) + bump, strike, ttm, local_rate, params, base_seed, path_factors)
+                down_price = self._price(opt_type, max(float(spot) - bump, 1e-4), strike, ttm, local_rate, params, base_seed, path_factors)
+                delta = (up_price - down_price) / (2 * bump)
+                gamma = (up_price - 2 * price + down_price) / (bump ** 2)
 
-                vol_bump = self.greek_bumps.get("vol", 0.05)
-                vol_step = max(vol * vol_bump, 1e-5)
-                up_vol = vol + vol_step
-                down_vol = max(vol - vol_step, 1e-6)
-                up_params = self._resolve_params(up_vol)
-                down_params = self._resolve_params(down_vol)
-                up_vol_price = self._price(opt_type, float(spot), strike, ttm, local_rate, up_params, seed)
-                down_vol_price = self._price(opt_type, float(spot), strike, ttm, local_rate, down_params, seed)
+                up_vol_price = self._price(opt_type, float(spot), strike, ttm, local_rate, up_params, base_seed, up_path)
+                down_vol_price = self._price(opt_type, float(spot), strike, ttm, local_rate, down_params, base_seed, down_path)
                 vega = (up_vol_price - down_vol_price) / (up_vol - down_vol)
 
                 records.append(
@@ -296,9 +338,10 @@ class GreeksCalculator:
         rate: float,
         params: HestonParameters,
         seed: Optional[int],
+        path_factors: Optional[np.ndarray] = None,
     ) -> float:
         pricer = HestonAmericanPricer(paths=self.paths, steps=self.steps, seed=seed, antithetic=self.antithetic)
-        return pricer.price(option_type, spot, strike, ttm, rate, params)
+        return pricer.price(option_type, spot, strike, ttm, rate, params, path_factors=path_factors)
 
     def _delta_gamma(
         self,
@@ -310,13 +353,14 @@ class GreeksCalculator:
         params: HestonParameters,
         seed: Optional[int],
         base_price: float,
+        path_factors: Optional[np.ndarray] = None,
     ) -> tuple[float, float]:
         bump_pct = self.greek_bumps.get("spot", 0.01)
         bump = max(bump_pct * spot, 1e-4)
         if spot - bump <= 0:
             bump = min(spot * 0.5, bump)
-        up = self._price(option_type, spot + bump, strike, ttm, rate, params, seed)
-        down = self._price(option_type, max(spot - bump, 1e-4), strike, ttm, rate, params, seed)
+        up = self._price(option_type, spot + bump, strike, ttm, rate, params, seed, path_factors)
+        down = self._price(option_type, max(spot - bump, 1e-4), strike, ttm, rate, params, seed, path_factors)
         delta = (up - down) / (2 * bump)
         gamma = (up - 2 * base_price + down) / (bump ** 2)
         return delta, gamma
@@ -338,8 +382,10 @@ class GreeksCalculator:
         down_vol = max(vol - bump, 1e-6)
         up_params = self._resolve_params(up_vol)
         down_params = self._resolve_params(down_vol)
-        up = self._price(option_type, spot, strike, ttm, rate, up_params, seed)
-        down = self._price(option_type, spot, strike, ttm, rate, down_params, seed)
+        up_path = self._generate_path_factors(ttm, rate, up_params, seed)
+        down_path = self._generate_path_factors(ttm, rate, down_params, seed)
+        up = self._price(option_type, spot, strike, ttm, rate, up_params, seed, up_path)
+        down = self._price(option_type, spot, strike, ttm, rate, down_params, seed, down_path)
         return (up - down) / (up_vol - down_vol)
 
     def _theta(
@@ -361,7 +407,8 @@ class GreeksCalculator:
         if ttm - bump <= 1e-6:
             return (up - base_price) / bump
         else:
-            down_price = self._price(option_type, spot, strike, ttm - bump, rate, params, seed)
+            down_path = self._generate_path_factors(ttm - bump, rate, params, seed)
+            down_price = self._price(option_type, spot, strike, ttm - bump, rate, params, seed, down_path)
         return (up - down_price) / (2 * bump)
 
     def _rho(
@@ -375,8 +422,12 @@ class GreeksCalculator:
         seed: Optional[int],
     ) -> float:
         bump = self.greek_bumps.get("rate", 1e-4)
-        up = self._price(option_type, spot, strike, ttm, rate + bump, params, seed)
-        down = self._price(option_type, spot, strike, ttm, rate - bump, params, seed)
+        up_params = params
+        down_params = params
+        up_path = self._generate_path_factors(ttm, rate + bump, up_params, seed)
+        down_path = self._generate_path_factors(ttm, rate - bump, down_params, seed)
+        up = self._price(option_type, spot, strike, ttm, rate + bump, up_params, seed, up_path)
+        down = self._price(option_type, spot, strike, ttm, rate - bump, down_params, seed, down_path)
         return (up - down) / (2 * bump)
 
     def _resolve_params(self, vol: float) -> HestonParameters:
@@ -411,6 +462,16 @@ class GreeksCalculator:
         params = self._resolve_params(vol)
         seed = self.seed if self.seed is not None else np.random.SeedSequence().generate_state(1)[0]
         return _PreparedInputs(opt_type, float(spot), float(strike), float(ttm), vol, float(local_rate), params, seed)
+
+    def _generate_path_factors(
+        self,
+        ttm: float,
+        rate: float,
+        params: HestonParameters,
+        seed: Optional[int],
+    ) -> np.ndarray:
+        pricer = HestonAmericanPricer(paths=self.paths, steps=self.steps, seed=seed, antithetic=self.antithetic)
+        return pricer.generate_path_factors(ttm, rate, params, seed)
 
     @staticmethod
     def _normalize_type(option_type: str) -> str:
