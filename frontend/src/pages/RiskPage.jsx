@@ -14,7 +14,10 @@ import {
   CloudLightning,
   DollarSign,
   Settings,
-  Check
+  Check,
+  RefreshCw,
+  Dice5,
+  Grid3X3
 } from 'lucide-react';
 import { 
   getRisk, 
@@ -23,7 +26,9 @@ import {
   updateAllocation, 
   killStrategy, 
   killAllStrategies,
-  updateRiskLimits
+  updateRiskLimits,
+  getMonteCarlo,
+  getPositions
 } from '../services/api';
 import { 
   AreaChart,
@@ -37,7 +42,10 @@ import {
   Pie,
   Cell,
   BarChart,
-  Bar
+  Bar,
+  LineChart,
+  Line,
+  Legend
 } from 'recharts';
 import AllocationModal from '../components/AllocationModal';
 
@@ -163,7 +171,10 @@ export default function RiskPage() {
   const [risk, setRisk] = useState(null);
   const [history, setHistory] = useState([]);
   const [allocations, setAllocations] = useState({});
+  const [monteCarlo, setMonteCarlo] = useState(null);
+  const [positions, setPositions] = useState({ positions: [], summary: {} });
   const [loading, setLoading] = useState(true);
+  const [monteCarloLoading, setMonteCarloLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState(null);
   const [selectedAllocation, setSelectedAllocation] = useState(null);
@@ -172,14 +183,16 @@ export default function RiskPage() {
   
   const fetchData = async () => {
     try {
-      const [riskData, historyData, allocData] = await Promise.all([
+      const [riskData, historyData, allocData, posData] = await Promise.all([
         getRisk().catch(() => null),
         getHistory().catch(() => []),
-        getAllocations().catch(() => ({ allocations: {} }))
+        getAllocations().catch(() => ({ allocations: {} })),
+        getPositions().catch(() => ({ positions: [], summary: {} }))
       ]);
       setRisk(riskData);
       setHistory(historyData);
       setAllocations(allocData.allocations || {});
+      setPositions(posData);
       if (riskData?.limits) {
         setLimits(riskData.limits);
       }
@@ -190,8 +203,21 @@ export default function RiskPage() {
     }
   };
   
+  const fetchMonteCarlo = async (forceRefresh = false) => {
+    setMonteCarloLoading(true);
+    try {
+      const mcData = await getMonteCarlo(forceRefresh);
+      setMonteCarlo(mcData);
+    } catch (error) {
+      console.error('Failed to fetch Monte Carlo:', error);
+    } finally {
+      setMonteCarloLoading(false);
+    }
+  };
+  
   useEffect(() => {
     fetchData();
+    fetchMonteCarlo();
     const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -640,6 +666,281 @@ export default function RiskPage() {
             </div>
           </div>
         </div>
+      </div>
+      
+      {/* Monte Carlo Simulation Section */}
+      <div className="card mb-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Dice5 className="w-5 h-5 text-secondary" />
+            <h2 className="text-xl font-semibold text-primary">Monte Carlo Risk of Ruin</h2>
+            {monteCarlo?.last_updated && (
+              <span className="text-xs text-secondary ml-2">
+                Updated: {new Date(monteCarlo.last_updated).toLocaleString()}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => fetchMonteCarlo(true)}
+            disabled={monteCarloLoading}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-surface-light hover:bg-background border border-border rounded-lg transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${monteCarloLoading ? 'animate-spin' : ''}`} />
+            Recalculate
+          </button>
+        </div>
+        
+        {monteCarlo?.error ? (
+          <div className="text-center py-8 text-secondary">
+            {monteCarlo.error}
+            {monteCarlo.min_required && (
+              <p className="text-sm mt-1">Need {monteCarlo.min_required} data points, have {monteCarlo.current}</p>
+            )}
+          </div>
+        ) : monteCarlo ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Risk of Ruin Cards */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-medium text-secondary uppercase tracking-wide">Risk of Ruin Probability</h3>
+              <div className="p-4 bg-surface-light rounded-lg border border-border">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-secondary">Lose 10%+</span>
+                  <span className={`text-xl font-mono font-semibold ${
+                    monteCarlo.risk_of_ruin['10_percent'] < 20 ? 'text-chart-green' : 
+                    monteCarlo.risk_of_ruin['10_percent'] < 40 ? 'text-yellow-500' : 'text-chart-red'
+                  }`}>
+                    {monteCarlo.risk_of_ruin['10_percent']}%
+                  </span>
+                </div>
+                <div className="h-2 bg-background rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full rounded-full ${
+                      monteCarlo.risk_of_ruin['10_percent'] < 20 ? 'bg-chart-green' : 
+                      monteCarlo.risk_of_ruin['10_percent'] < 40 ? 'bg-yellow-500' : 'bg-chart-red'
+                    }`}
+                    style={{ width: `${Math.min(monteCarlo.risk_of_ruin['10_percent'], 100)}%` }}
+                  />
+                </div>
+              </div>
+              
+              <div className="p-4 bg-surface-light rounded-lg border border-border">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-secondary">Lose 25%+</span>
+                  <span className={`text-xl font-mono font-semibold ${
+                    monteCarlo.risk_of_ruin['25_percent'] < 10 ? 'text-chart-green' : 
+                    monteCarlo.risk_of_ruin['25_percent'] < 25 ? 'text-yellow-500' : 'text-chart-red'
+                  }`}>
+                    {monteCarlo.risk_of_ruin['25_percent']}%
+                  </span>
+                </div>
+                <div className="h-2 bg-background rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full rounded-full ${
+                      monteCarlo.risk_of_ruin['25_percent'] < 10 ? 'bg-chart-green' : 
+                      monteCarlo.risk_of_ruin['25_percent'] < 25 ? 'bg-yellow-500' : 'bg-chart-red'
+                    }`}
+                    style={{ width: `${Math.min(monteCarlo.risk_of_ruin['25_percent'], 100)}%` }}
+                  />
+                </div>
+              </div>
+              
+              <div className="p-4 bg-surface-light rounded-lg border border-border">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-secondary">Lose 50%+</span>
+                  <span className={`text-xl font-mono font-semibold ${
+                    monteCarlo.risk_of_ruin['50_percent'] < 5 ? 'text-chart-green' : 
+                    monteCarlo.risk_of_ruin['50_percent'] < 15 ? 'text-yellow-500' : 'text-chart-red'
+                  }`}>
+                    {monteCarlo.risk_of_ruin['50_percent']}%
+                  </span>
+                </div>
+                <div className="h-2 bg-background rounded-full overflow-hidden">
+                  <div 
+                    className={`h-full rounded-full ${
+                      monteCarlo.risk_of_ruin['50_percent'] < 5 ? 'bg-chart-green' : 
+                      monteCarlo.risk_of_ruin['50_percent'] < 15 ? 'bg-yellow-500' : 'bg-chart-red'
+                    }`}
+                    style={{ width: `${Math.min(monteCarlo.risk_of_ruin['50_percent'], 100)}%` }}
+                  />
+                </div>
+              </div>
+              
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 gap-3 mt-4 pt-4 border-t border-border">
+                <div>
+                  <span className="text-xs text-secondary">Median Final</span>
+                  <p className="font-mono text-chart-green">${monteCarlo.final_equity?.median?.toLocaleString()}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-secondary">Worst 5%</span>
+                  <p className="font-mono text-chart-red">${monteCarlo.final_equity?.worst_case_5pct?.toLocaleString()}</p>
+                </div>
+                <div>
+                  <span className="text-xs text-secondary">Avg Max DD</span>
+                  <p className="font-mono text-yellow-500">{monteCarlo.max_drawdown?.average?.toFixed(1)}%</p>
+                </div>
+                <div>
+                  <span className="text-xs text-secondary">Worst DD</span>
+                  <p className="font-mono text-chart-red">{monteCarlo.max_drawdown?.worst?.toFixed(1)}%</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Cone Chart with Sample Paths */}
+            <div className="lg:col-span-2">
+              <h3 className="text-sm font-medium text-secondary uppercase tracking-wide mb-4">
+                Equity Cone ({monteCarlo.num_simulations?.toLocaleString()} simulations, {monteCarlo.num_trades} trades)
+              </h3>
+              <ResponsiveContainer width="100%" height={320}>
+                <AreaChart 
+                  data={monteCarlo.cone?.time_points?.map((t, i) => ({
+                    trade: t,
+                    p5: monteCarlo.cone.p5[i],
+                    p25: monteCarlo.cone.p25[i],
+                    p50: monteCarlo.cone.p50[i],
+                    p75: monteCarlo.cone.p75[i],
+                    p95: monteCarlo.cone.p95[i],
+                    ...Object.fromEntries(
+                      (monteCarlo.sample_paths || []).map((path, idx) => [`sample${idx}`, path[i]])
+                    )
+                  })) || []}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#262626" />
+                  <XAxis 
+                    dataKey="trade" 
+                    stroke="#a3a3a3" 
+                    tick={{ fill: '#a3a3a3', fontSize: 11 }}
+                    label={{ value: 'Trades', position: 'insideBottom', offset: -5, fill: '#a3a3a3' }}
+                  />
+                  <YAxis 
+                    stroke="#a3a3a3" 
+                    tick={{ fill: '#a3a3a3', fontSize: 11 }}
+                    tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`}
+                  />
+                  <Tooltip 
+                    contentStyle={{ 
+                      backgroundColor: '#141414', 
+                      border: '1px solid #262626',
+                      borderRadius: '8px'
+                    }}
+                    formatter={(value, name) => {
+                      if (name.startsWith('sample')) return null;
+                      const labels = { p5: '5th %ile', p25: '25th %ile', p50: 'Median', p75: '75th %ile', p95: '95th %ile' };
+                      return [`$${Number(value).toLocaleString()}`, labels[name] || name];
+                    }}
+                  />
+                  {/* Outer band (5-95) */}
+                  <Area type="monotone" dataKey="p95" stackId="cone" stroke="none" fill="rgba(34, 197, 94, 0.1)" />
+                  <Area type="monotone" dataKey="p5" stackId="cone2" stroke="none" fill="#0a0a0a" />
+                  {/* Inner band (25-75) */}
+                  <Area type="monotone" dataKey="p75" stroke="none" fill="rgba(34, 197, 94, 0.2)" />
+                  <Area type="monotone" dataKey="p25" stroke="none" fill="#0a0a0a" />
+                  {/* Median line */}
+                  <Line type="monotone" dataKey="p50" stroke="#22c55e" strokeWidth={2} dot={false} />
+                  {/* Sample paths */}
+                  {(monteCarlo.sample_paths || []).slice(0, 10).map((_, idx) => (
+                    <Line 
+                      key={idx}
+                      type="monotone" 
+                      dataKey={`sample${idx}`} 
+                      stroke={idx % 2 === 0 ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.1)"} 
+                      strokeWidth={1} 
+                      dot={false}
+                    />
+                  ))}
+                </AreaChart>
+              </ResponsiveContainer>
+              <div className="flex justify-center gap-6 mt-2 text-xs text-secondary">
+                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-chart-green/20 rounded" /> 25-75th Percentile</span>
+                <span className="flex items-center gap-1"><span className="w-3 h-3 bg-chart-green/10 rounded" /> 5-95th Percentile</span>
+                <span className="flex items-center gap-1"><span className="w-8 h-0.5 bg-chart-green rounded" /> Median</span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center py-12">
+            <Activity className="w-6 h-6 text-secondary animate-spin" />
+          </div>
+        )}
+      </div>
+      
+      {/* Position Heatmap Section */}
+      <div className="card mb-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Grid3X3 className="w-5 h-5 text-secondary" />
+            <h2 className="text-xl font-semibold text-primary">Position Heatmap</h2>
+            {positions.summary?.position_count > 0 && (
+              <span className="text-sm text-secondary">
+                {positions.summary.position_count} positions
+              </span>
+            )}
+          </div>
+          {positions.summary?.total_pnl !== undefined && (
+            <div className="text-right">
+              <span className="text-sm text-secondary">Total P&L: </span>
+              <span className={`font-mono font-semibold ${
+                positions.summary.total_pnl >= 0 ? 'text-chart-green' : 'text-chart-red'
+              }`}>
+                {positions.summary.total_pnl >= 0 ? '+' : ''}${positions.summary.total_pnl?.toLocaleString()}
+              </span>
+            </div>
+          )}
+        </div>
+        
+        {positions.positions?.length > 0 ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2">
+            {positions.positions.map((pos) => {
+              const pnlPct = pos.unrealized_pnl_pct;
+              const intensity = Math.min(Math.abs(pnlPct) / 10, 1); // Cap at 10% for full saturation
+              const bgColor = pnlPct >= 0 
+                ? `rgba(34, 197, 94, ${0.1 + intensity * 0.4})`  // Green
+                : `rgba(239, 68, 68, ${0.1 + intensity * 0.4})`; // Red
+              const borderColor = pnlPct >= 0 
+                ? `rgba(34, 197, 94, ${0.3 + intensity * 0.5})`
+                : `rgba(239, 68, 68, ${0.3 + intensity * 0.5})`;
+              
+              return (
+                <div
+                  key={pos.symbol}
+                  className="p-3 rounded-lg border transition-all hover:scale-105 cursor-default"
+                  style={{ backgroundColor: bgColor, borderColor }}
+                  title={`${pos.symbol}\nQty: ${pos.qty} ${pos.side}\nValue: $${pos.market_value?.toLocaleString()}\nEntry: $${pos.avg_entry_price?.toFixed(2)}\nCurrent: $${pos.current_price?.toFixed(2)}\nP&L: $${pos.unrealized_pnl?.toFixed(2)} (${pos.unrealized_pnl_pct?.toFixed(2)}%)`}
+                >
+                  <div className="font-mono font-semibold text-primary text-sm truncate">
+                    {pos.symbol}
+                  </div>
+                  <div className={`text-xs font-mono ${pnlPct >= 0 ? 'text-chart-green' : 'text-chart-red'}`}>
+                    {pnlPct >= 0 ? '+' : ''}{pnlPct?.toFixed(1)}%
+                  </div>
+                  <div className="text-xs text-secondary truncate">
+                    ${Math.abs(pos.unrealized_pnl)?.toFixed(0)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-8 text-secondary">
+            No open positions
+          </div>
+        )}
+        
+        {/* Heatmap Legend */}
+        {positions.positions?.length > 0 && (
+          <div className="flex justify-center items-center gap-2 mt-4 pt-4 border-t border-border">
+            <span className="text-xs text-secondary">Loss</span>
+            <div className="flex h-3 rounded overflow-hidden">
+              <div className="w-6" style={{ backgroundColor: 'rgba(239, 68, 68, 0.5)' }} />
+              <div className="w-6" style={{ backgroundColor: 'rgba(239, 68, 68, 0.3)' }} />
+              <div className="w-6" style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)' }} />
+              <div className="w-6" style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)' }} />
+              <div className="w-6" style={{ backgroundColor: 'rgba(34, 197, 94, 0.3)' }} />
+              <div className="w-6" style={{ backgroundColor: 'rgba(34, 197, 94, 0.5)' }} />
+            </div>
+            <span className="text-xs text-secondary">Gain</span>
+          </div>
+        )}
       </div>
       
       {/* Risk Alerts */}

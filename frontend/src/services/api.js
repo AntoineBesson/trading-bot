@@ -32,9 +32,30 @@ export const stopStrategy = async (strategyId) => {
   return response.data;
 };
 
+export const killStrategy = async (strategyId) => {
+  const response = await api.post(`/strategies/${strategyId}/kill`);
+  return response.data;
+};
+
+export const killAllStrategies = async () => {
+  const response = await api.post('/emergency/kill-all');
+  return response.data;
+};
+
 // Capital Allocation
 export const getCapital = async () => {
   const response = await api.get('/capital');
+  return response.data;
+};
+
+// Allocations (detailed)
+export const getAllocations = async () => {
+  const response = await api.get('/allocations');
+  return response.data;
+};
+
+export const updateAllocation = async (strategyId, equity, leverage) => {
+  const response = await api.put(`/allocations/${strategyId}`, { equity, leverage });
   return response.data;
 };
 
@@ -50,6 +71,16 @@ export const getRisk = async () => {
   return response.data;
 };
 
+export const getRiskLimits = async () => {
+  const response = await api.get('/risk/limits');
+  return response.data;
+};
+
+export const updateRiskLimits = async (limits) => {
+  const response = await api.put('/risk/limits', limits);
+  return response.data;
+};
+
 // Equity History
 export const getHistory = async () => {
   const response = await api.get('/history');
@@ -59,6 +90,23 @@ export const getHistory = async () => {
 // Logs
 export const getLogs = async () => {
   const response = await api.get('/logs');
+  return response.data;
+};
+
+// Monte Carlo
+export const getMonteCarlo = async (forceRefresh = false) => {
+  const response = await api.get('/montecarlo', { params: { force_refresh: forceRefresh } });
+  return response.data;
+};
+
+export const updateMonteCarloSettings = async (intervalHours) => {
+  const response = await api.put('/montecarlo/settings', null, { params: { interval_hours: intervalHours } });
+  return response.data;
+};
+
+// Positions (for heatmap)
+export const getPositions = async () => {
+  const response = await api.get('/positions');
   return response.data;
 };
 
