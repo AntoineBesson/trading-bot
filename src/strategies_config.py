@@ -3,6 +3,20 @@ from src.strategies.volatility_arb import VolatilityArbitrageStrategy
 from src.strategies.macro_arbitrage import MacroArbitrageStrategy
 from src.tools.build_macro_universe import load_macro_universe
 
+# --- Strategy Toggles ---
+# Set to False to disable entire strategy family without removing code
+ENABLE_OPTION_PAIRS = False
+ENABLE_VOLATILITY_ARB = True
+ENABLE_SECTOR_MOMENTUM = True
+ENABLE_MACRO_ARBITRAGE = True
+
+# --- Capital Allocation ---
+# Total capital reserved for option pairs; divided equally among active pairs
+OPTION_PAIRS_TOTAL_ALLOCATION = 50_000.0
+VOLATILITY_ARB_ALLOCATION = 10_000.0
+SECTOR_MOMENTUM_ALLOCATION = 30_000.0
+MACRO_ARBITRAGE_ALLOCATION = 20_000.0
+
 # --- Universe Definitions ---
 SECTOR_UNIVERSE = [
     'XLK', # Technology
@@ -20,17 +34,11 @@ SECTOR_UNIVERSE = [
 
 DEFENSIVE_ASSETS = ['SHV', 'BIL'] # Short-Term Treasuries
 
-def create_option_pair_config(symbol_a, symbol_b, allocation=5000.0):
+def create_option_pair_config(symbol_a: str, symbol_b: str, allocation: float):
     """
     Generates a configuration dictionary for an Option Pair strategy.
-    
-    Args:
-        symbol_a (str): The first symbol in the pair.
-        symbol_b (str): The second symbol in the pair.
-        allocation (float): The capital allocated to this strategy.
-        
-    Returns:
-        dict: A configuration dictionary ready for the StrategyManager.
+
+    allocation must be passed explicitly (use OPTION_PAIRS_TOTAL_ALLOCATION / n_pairs).
     """
     strategy_id = f"OptionPair_{symbol_a}_{symbol_b}"
     

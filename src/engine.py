@@ -16,6 +16,14 @@ from src.options.multileg import MultiLegExecutionHelper
 from src.portfolio_manager import PortfolioManager
 from src.strategy_manager import StrategyManager
 from src.strategies_config import (
+    ENABLE_MACRO_ARBITRAGE,
+    ENABLE_OPTION_PAIRS,
+    ENABLE_SECTOR_MOMENTUM,
+    ENABLE_VOLATILITY_ARB,
+    MACRO_ARBITRAGE_ALLOCATION,
+    OPTION_PAIRS_TOTAL_ALLOCATION,
+    SECTOR_MOMENTUM_ALLOCATION,
+    VOLATILITY_ARB_ALLOCATION,
     create_macro_arbitrage_config,
     create_option_pair_config,
     create_sector_momentum_config,
@@ -134,41 +142,44 @@ class TradingEngine:
     def rebalance_strategies(self):
         """Scans the universe and rebuilds the strategy list."""
         logger.info("Rebalancing strategies based on universe scan...")
-        
-        # 1. Scan for pairs
+
+        # 1. Scan for pairs (returns cached list when < 24 h old)
         watchlist = self.universe_manager.scan()
-        
+
         # 2. Build Strategy Configs
         strategy_configs = []
-        
+
         # A. Option Pairs Strategies
-        for item in watchlist:
-            sym_a = item['symbol_a']
-            sym_b = item['symbol_b']
-            
-            config = create_option_pair_config(sym_a, sym_b, allocation=5000.0)
-            config['parameters']['option_data_handler'] = self.option_data_handler
-            config['parameters']['multi_leg_execution'] = self.multi_leg_helper
-            strategy_configs.append(config)
-            
+        if ENABLE_OPTION_PAIRS and watchlist:
+            per_pair_alloc = OPTION_PAIRS_TOTAL_ALLOCATION / len(watchlist)
+            for item in watchlist:
+                config = create_option_pair_config(
+                    item['symbol_a'], item['symbol_b'], allocation=per_pair_alloc
+                )
+                config['parameters']['option_data_handler'] = self.option_data_handler
+                config['parameters']['multi_leg_execution'] = self.multi_leg_helper
+                strategy_configs.append(config)
+
         # B. Volatility Arbitrage Strategies
-        vol_arb_symbols = ['SPY']
-        if watchlist:
-            vol_arb_symbols.append(watchlist[0]['symbol_a'])
-            
-        for sym in vol_arb_symbols:
-            config = create_volatility_arb_config(sym, allocation=10000.0)
-            config['parameters']['option_data_handler'] = self.option_data_handler
-            config['parameters']['multi_leg_execution'] = self.multi_leg_helper
-            strategy_configs.append(config)
-            
+        if ENABLE_VOLATILITY_ARB:
+            vol_arb_symbols = ['SPY']
+            if watchlist:
+                vol_arb_symbols.append(watchlist[0]['symbol_a'])
+            for sym in vol_arb_symbols:
+                config = create_volatility_arb_config(sym, allocation=VOLATILITY_ARB_ALLOCATION)
+                config['parameters']['option_data_handler'] = self.option_data_handler
+                config['parameters']['multi_leg_execution'] = self.multi_leg_helper
+                strategy_configs.append(config)
+
         # C. Sector Momentum Strategy
-        sector_config = create_sector_momentum_config(allocation=30000.0)
-        strategy_configs.append(sector_config)
+        if ENABLE_SECTOR_MOMENTUM:
+            sector_config = create_sector_momentum_config(allocation=SECTOR_MOMENTUM_ALLOCATION)
+            strategy_configs.append(sector_config)
 
         # D. Macro Arbitrage Strategy
-        macro_config = create_macro_arbitrage_config(allocation=20000.0)
-        strategy_configs.append(macro_config)
+        if ENABLE_MACRO_ARBITRAGE:
+            macro_config = create_macro_arbitrage_config(allocation=MACRO_ARBITRAGE_ALLOCATION)
+            strategy_configs.append(macro_config)
 
         # 3. Update Strategy Manager
         self.sm.update_strategies(strategy_configs)
