@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # --- Imports for the NEW 'alpaca-py' library ---
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.historical.news import NewsClient
-from alpaca.data.requests import StockBarsRequest, NewsRequest
+from alpaca.data.requests import StockBarsRequest, NewsRequest, StockTradesRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.data.enums import DataFeed
 
@@ -145,6 +145,52 @@ class DataHandler:
 
         except Exception as e:
             print(f"---!!! AN ERROR OCCURRED during data fetch !!!---")
+            print(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def get_historical_trades(self, symbols, start, end=None, limit=None):
+        """
+        Fetches historical trade data (tick data) for one or more symbols.
+        Used for constructing Dollar Bars.
+        """
+        logger.info(f"[API] Fetching historical trades for {len(symbols)} symbols ({symbols[0]}...)")
+
+        try:
+            start_dt = datetime.fromisoformat(start)
+            end_dt = datetime.fromisoformat(end) if end else None
+        except Exception as e:
+            print(f"Error parsing date strings: {e}. Please use YYYY-MM-DD format.")
+            return None
+
+        try:
+            request_params = StockTradesRequest(
+                symbol_or_symbols=symbols,
+                start=start_dt,
+                end=end_dt,
+                limit=limit,
+                feed=DataFeed.IEX # Use IEX for free tier
+            )
+
+            print("Submitting trade data request to Alpaca...")
+            trades = self.client.get_stock_trades(request_params)
+
+            if trades.df.empty:
+                print("TradeSet returned, but DataFrame is empty.")
+                return {}
+
+            # Process similarly to bars: Group by symbol and drop the index level
+            final_data = {}
+            grouped_by_symbol = trades.df.groupby(level=0)
+            
+            for symbol, symbol_df in grouped_by_symbol:
+                final_data[symbol] = symbol_df.reset_index(level=0, drop=True)
+            
+            return final_data
+
+        except Exception as e:
+            print(f"---!!! AN ERROR OCCURRED during trade fetch !!!---")
             print(f"Error: {e}")
             import traceback
             traceback.print_exc()
