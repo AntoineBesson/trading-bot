@@ -67,52 +67,68 @@ class PurgedKFold(KFold):
             max_test_end = t1_test.max()
             min_test_start = t0_test.min()
             
-            # 2. Iterate train indices and purge
-            train_indices_kept = []
+            # 2. Vectorized Purge
             
-            for i in train_indices:
-                t0_i = t0[i]
-                t1_i = self.t1.loc[t0_i]
-                
-                # Check overlap
-                # Overlap if: t0_i < max_test_end AND t1_i > min_test_start
-                # NOTE: This assumes closed intervals.
-                
-                is_overlap = (t0_i <= max_test_end) and (t1_i >= min_test_start)
-                
-                if not is_overlap:
-                    train_indices_kept.append(i)
+            # Get start/end times for the training candidate set
+            t0_train = t0[train_indices]
+            
+            # We need the end times (t1) for these training samples.
+            # Assuming self.t1 contains all indices in X.
+            try:
+                t1_train = self.t1.loc[t0_train]
+            except KeyError:
+                raise KeyError("t1 (event end times) missing for some training indices.")
+
+            # Check overlap vectorially
+            # Overlap condition:
+            # (Start_Train <= End_Test) AND (End_Train >= Start_Test)
+            # We want to KEEP samples that do NOT overlap.
+            
+            # Note: Using .values to ensure we work with numpy arrays for speed and avoid index alignment issues 
+            # if t1_train has different index name or properties slightly.
+            
+            train_start_values = t0_train.values
+            train_end_values = t1_train.values
+            
+            # Overlap mask
+            is_overlap = (train_start_values <= max_test_end) & (train_end_values >= min_test_start)
+            
+            # Keep non-overlapping
+            train_indices_kept = train_indices[~is_overlap]
                     
             # 3. Apply Embargo
-            # Drop samples immediately after the test set to avoid correlation leakage.
-            # If Test is before Train -> Embargo the start of Train.
-            # If Test is after Train -> No problem? (Actually test is usually the future)
-            # Standard KFold moves the test block.
-            
-            # If Train is *after* Test, we need to embargo the start of that train block.
-            # Since we iterate i in train_indices, we can check.
-            
-            # Embargo duration
-            embargo_dt = pd.Timedelta(seconds=0)
             if self.pct_embargo > 0:
+                embargo_dt = pd.Timedelta(seconds=0)
                 # Approximate generic duration
                 total_duration = t0[-1] - t0[0]
                 embargo_ms = int(total_duration.total_seconds() * self.pct_embargo * 1000)
                 embargo_dt = pd.Timedelta(milliseconds=embargo_ms)
                 
-            # If i is in the "future" relative to test set, it must start after max_test_end + embargo
-            final_train_indices = []
-            for i in train_indices_kept:
-                t0_i = t0[i]
-                
-                # If this sample is after the test set
-                if t0_i > max_test_end:
-                    # Apply embargo
-                    if t0_i >= (max_test_end + embargo_dt):
-                        final_train_indices.append(i)
-                else:
-                    # If this sample is before the test set, we already purged overlaps.
-                    final_train_indices.append(i)
+                if embargo_dt > pd.Timedelta(0):
+                    # Elements to check for embargo
+                    # We need to re-fetch timestamps for kept indices
+                    t0_kept = t0[train_indices_kept]
+                    t0_kept_values = t0_kept.values
                     
-            yield np.array(final_train_indices), test_indices
+                    # Logic:
+                    # If sample is AFTER test set (Start > max_test_end), it must also be >= max_test_end + embargo
+                    # If sample is BEFORE test set, we keep it (already purged overlaps).
+                    
+                    # Correct Logic:
+                    # Keep if (NOT After_Test) OR (After_Test AND >= Embargo_Limit)
+                    # Equivalent: (~After_Test) | (>= Embargo_Limit)
+                    
+                    after_test_mask = t0_kept_values > max_test_end
+                    embargo_limit = max_test_end + embargo_dt
+                    pass_embargo_mask = t0_kept_values >= embargo_limit
+                    
+                    final_mask = (~after_test_mask) | pass_embargo_mask
+                    
+                    final_train_indices = train_indices_kept[final_mask]
+                else:
+                    final_train_indices = train_indices_kept
+            else:
+                final_train_indices = train_indices_kept
+            
+            yield final_train_indices, test_indices
 

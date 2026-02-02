@@ -78,6 +78,7 @@ def apply_pt_sl_on_t1(req, close, events_index, pt_sl):
     pt_sl: [pt, sl] multipliers.
     """
     
+    
     # req.name is the start time (t0)
     t0 = req.name
     t1 = req['t1'] # Vertical barrier (could be NaT)
@@ -96,43 +97,39 @@ def apply_pt_sl_on_t1(req, close, events_index, pt_sl):
     if path_prices.empty:
         return np.nan
         
-    # Calculate returns relative to t0 PRICE (not log returns for simplicity, or log? Standard is usually log or relative)
-    # Book usually uses log prices, or relative prices. Let's assume 'close' is raw price.
-    # ret = (price / price[t0]) - 1
-    
     entry_price = close[t0]
-    returns = (path_prices / entry_price) - 1
     
-    # Define barriers
-    # Top barrier: returns >= trgt * pt
-    # Bottom barrier: returns <= -trgt * sl
+    # Use numpy values for speed
+    path_prices_values = path_prices.values
+    path_index = path_prices.index
     
-    out_bounds = pd.Series(dtype='datetime64[ns]')
+    # Calculate returns relative to t0 PRICE
+    returns_values = (path_prices_values / entry_price) - 1
+    
+    # Initialize earliest touch as NaT or t1
+    first_touch = t1
     
     # Check Profit Take (Upper)
     if pt_sl[0] > 0:
         thresh = trgt * pt_sl[0]
-        # Find first index where return > thresh
-        touched = returns[returns >= thresh].index
-        if not touched.empty:
-            out_bounds['pt'] = touched[0]
+        # Find first index where return >= thresh
+        # argmax returns the index of the first occurrence of maximum value (True > False)
+        mask = returns_values >= thresh
+        if mask.any():
+            pt_time = path_index[mask.argmax()]
+            if pd.isna(first_touch) or pt_time < first_touch:
+                first_touch = pt_time
             
     # Check Stop Loss (Lower)
     if pt_sl[1] > 0:
         thresh = -trgt * pt_sl[1]
-        touched = returns[returns <= thresh].index
-        if not touched.empty:
-            out_bounds['sl'] = touched[0]
-            
-    # Also consider the vertical barrier t1
-    if not pd.isna(t1):
-        out_bounds['t1'] = t1
-        
-    if out_bounds.empty:
-        return np.nan
-        
-    # Return the earliest touch
-    return out_bounds.min()
+        mask = returns_values <= thresh
+        if mask.any():
+            sl_time = path_index[mask.argmax()]
+            if pd.isna(first_touch) or sl_time < first_touch:
+                first_touch = sl_time
+    
+    return first_touch
 
 
 def get_bins(events, close):
